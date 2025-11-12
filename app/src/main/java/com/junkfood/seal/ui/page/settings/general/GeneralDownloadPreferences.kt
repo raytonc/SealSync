@@ -18,24 +18,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
-import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.HistoryToggleOff
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.MoneyOff
-import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.NotificationsActive
-import androidx.compose.material.icons.outlined.NotificationsOff
-import androidx.compose.material.icons.outlined.PlaylistAddCheck
-import androidx.compose.material.icons.outlined.Print
-import androidx.compose.material.icons.outlined.PrintDisabled
-import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SyncAlt
 import androidx.compose.material.icons.outlined.Update
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
@@ -65,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
@@ -83,21 +68,11 @@ import com.junkfood.seal.ui.component.ConfirmButton
 import com.junkfood.seal.ui.component.DismissButton
 import com.junkfood.seal.ui.component.PreferenceInfo
 import com.junkfood.seal.ui.component.PreferenceItem
-import com.junkfood.seal.ui.component.PreferenceSubtitle
-import com.junkfood.seal.ui.component.PreferenceSwitch
 import com.junkfood.seal.ui.component.PreferenceSwitchWithDivider
 import com.junkfood.seal.ui.component.SealDialog
-import com.junkfood.seal.ui.page.download.NotificationPermissionDialog
-import com.junkfood.seal.util.CONFIGURE
 import com.junkfood.seal.util.CUSTOM_COMMAND
-import com.junkfood.seal.util.DEBUG
-import com.junkfood.seal.util.DISABLE_PREVIEW
 import com.junkfood.seal.util.DOWNLOAD_ARCHIVE
 import com.junkfood.seal.util.FileUtil.getArchiveFile
-import com.junkfood.seal.util.NOTIFICATION
-import com.junkfood.seal.util.NotificationUtil
-import com.junkfood.seal.util.PLAYLIST
-import com.junkfood.seal.util.PRIVATE_MODE
 import com.junkfood.seal.util.PreferenceStrings.getUpdateIntervalText
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getLong
@@ -105,9 +80,6 @@ import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateInt
 import com.junkfood.seal.util.PreferenceUtil.updateLong
-import com.junkfood.seal.util.SPONSORBLOCK
-import com.junkfood.seal.util.SUBTITLE
-import com.junkfood.seal.util.THUMBNAIL
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.UpdateIntervalList
 import com.junkfood.seal.util.UpdateUtil
@@ -127,44 +99,16 @@ import kotlinx.coroutines.withContext
 )
 @Composable
 fun GeneralDownloadPreferences(
-    onNavigateBack: () -> Unit,
-    navigateToTemplate: () -> Unit
+    onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val hapticFeedback = LocalHapticFeedback.current
 
-    var showSponsorBlockDialog by remember { mutableStateOf(false) }
     var showYtdlpDialog by remember { mutableStateOf(false) }
     var isUpdating by remember { mutableStateOf(false) }
 
-    val downloadSubtitle by SUBTITLE.booleanState
-
-    var displayErrorReport by DEBUG.booleanState
-    var downloadPlaylist by remember { mutableStateOf(PreferenceUtil.getValue(PLAYLIST)) }
-    var isSponsorBlockEnabled by remember { mutableStateOf(PreferenceUtil.getValue(SPONSORBLOCK)) }
-    var downloadNotification by remember {
-        mutableStateOf(PreferenceUtil.getValue(NOTIFICATION))
-    }
-
-    var isPrivateModeEnabled by remember {
-        mutableStateOf(PreferenceUtil.getValue(PRIVATE_MODE))
-    }
-
-    var isPreviewDisabled by remember { mutableStateOf(PreferenceUtil.getValue(DISABLE_PREVIEW)) }
-    var isNotificationPermissionGranted by remember {
-        mutableStateOf(NotificationUtil.areNotificationsEnabled())
-    }
-
-    val notificationPermission =
-        if (Build.VERSION.SDK_INT >= 33) rememberPermissionState(permission = Manifest.permission.POST_NOTIFICATIONS) { status ->
-            if (!status) ToastUtil.makeToast(context.getString(R.string.permission_denied))
-            else isNotificationPermissionGranted = true
-        } else null
-
     var useDownloadArchive by DOWNLOAD_ARCHIVE.booleanState
     var showClearArchiveDialog by remember { mutableStateOf(false) }
-    var showNotificationDialog by remember { mutableStateOf(false) }
     var archiveFileContent by remember {
         mutableStateOf("")
     }
@@ -199,9 +143,6 @@ fun GeneralDownloadPreferences(
             LazyColumn(
                 modifier = Modifier.padding(it)
             ) {
-//                item {
-//                    SettingTitle(text = stringResource(id = R.string.general_settings))
-//                }
                 if (isCustomCommandEnabled)
                     item {
                         PreferenceInfo(text = stringResource(id = R.string.custom_command_enabled_hint))
@@ -254,134 +195,6 @@ fun GeneralDownloadPreferences(
                         }
                     )
                 }
-                item {
-                    PreferenceSwitch(title = stringResource(id = R.string.download_notification),
-                        description = stringResource(
-                            id = if (isNotificationPermissionGranted) R.string.download_notification_desc
-                            else R.string.permission_denied
-                        ),
-                        icon = if (!isNotificationPermissionGranted) Icons.Outlined.NotificationsOff
-                        else if (!downloadNotification) Icons.Outlined.Notifications
-                        else Icons.Outlined.NotificationsActive,
-                        isChecked = downloadNotification && isNotificationPermissionGranted,
-                        onClick = {
-                            if (notificationPermission?.status is PermissionStatus.Denied) {
-                                showNotificationDialog = true
-                            } else if (isNotificationPermissionGranted) {
-                                if (downloadNotification)
-                                    NotificationUtil.cancelAllNotifications()
-                                downloadNotification = !downloadNotification
-                                PreferenceUtil.updateValue(
-                                    NOTIFICATION, downloadNotification
-                                )
-                            }
-                        })
-                }
-
-                item {
-                    var configureBeforeDownload by CONFIGURE.booleanState
-                    PreferenceSwitch(title = stringResource(id = R.string.settings_before_download),
-                        description = stringResource(
-                            id = R.string.settings_before_download_desc
-                        ),
-                        icon = if (configureBeforeDownload) Icons.Outlined.DoneAll else Icons.Outlined.RemoveDone,
-                        isChecked = configureBeforeDownload,
-                        onClick = {
-                            configureBeforeDownload = !configureBeforeDownload
-                            PreferenceUtil.updateValue(
-                                CONFIGURE, configureBeforeDownload
-                            )
-                        })
-                }
-
-
-                item {
-                    var thumbnailSwitch by remember {
-                        mutableStateOf(
-                            PreferenceUtil.getValue(THUMBNAIL)
-                        )
-                    }
-                    PreferenceSwitch(title = stringResource(id = R.string.create_thumbnail),
-                        description = stringResource(
-                            id = R.string.create_thumbnail_summary
-                        ),
-                        enabled = !isCustomCommandEnabled,
-                        icon = Icons.Outlined.Image,
-                        isChecked = thumbnailSwitch,
-                        onClick = {
-                            thumbnailSwitch = !thumbnailSwitch
-                            PreferenceUtil.updateValue(THUMBNAIL, thumbnailSwitch)
-                        })
-                }
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(R.string.print_details),
-                        description = stringResource(R.string.print_details_desc),
-                        icon = if (displayErrorReport) Icons.Outlined.Print else Icons.Outlined.PrintDisabled,
-                        enabled = !isCustomCommandEnabled,
-                        onClick = {
-                            displayErrorReport = !displayErrorReport
-                            PreferenceUtil.updateValue(DEBUG, displayErrorReport)
-                        },
-                        isChecked = displayErrorReport
-                    )
-                }
-
-                item {
-                    PreferenceSubtitle(text = stringResource(id = R.string.privacy))
-                }
-
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(R.string.private_mode),
-                        description = stringResource(R.string.private_mode_desc),
-                        icon = if (isPrivateModeEnabled) Icons.Outlined.HistoryToggleOff else Icons.Outlined.History,
-                        isChecked = isPrivateModeEnabled,
-                        enabled = !isCustomCommandEnabled,
-                        onClick = {
-                            isPrivateModeEnabled = !isPrivateModeEnabled
-                            PreferenceUtil.updateValue(
-                                PRIVATE_MODE,
-                                isPrivateModeEnabled
-                            )
-                        }
-                    )
-                }
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(R.string.disable_preview),
-                        description = stringResource(R.string.disable_preview_desc),
-                        icon = if (isPreviewDisabled) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        isChecked = isPreviewDisabled,
-                        enabled = !isCustomCommandEnabled,
-                        onClick = {
-                            isPreviewDisabled = !isPreviewDisabled
-                            PreferenceUtil.updateValue(
-                                DISABLE_PREVIEW,
-                                isPreviewDisabled
-                            )
-                        }
-                    )
-                }
-
-                item {
-                    PreferenceSubtitle(text = stringResource(R.string.advanced_settings))
-                }
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(id = R.string.download_playlist),
-                        onClick = {
-                            downloadPlaylist = !downloadPlaylist
-                            PreferenceUtil.updateValue(
-                                PLAYLIST, downloadPlaylist
-                            )
-                        },
-                        icon = Icons.Outlined.PlaylistAddCheck,
-                        enabled = !isCustomCommandEnabled,
-                        description = stringResource(R.string.download_playlist_desc),
-                        isChecked = downloadPlaylist
-                    )
-                }
 
                 item {
                     PreferenceSwitchWithDivider(
@@ -404,32 +217,8 @@ fun GeneralDownloadPreferences(
                         enabled = isPermissionGranted
                     )
                 }
-
-                item {
-                    PreferenceSwitchWithDivider(title = stringResource(R.string.sponsorblock),
-                        description = stringResource(
-                            R.string.sponsorblock_desc
-                        ),
-                        icon = Icons.Outlined.MoneyOff,
-                        enabled = !isCustomCommandEnabled,
-                        isChecked = isSponsorBlockEnabled,
-                        onChecked = {
-                            isSponsorBlockEnabled = !isSponsorBlockEnabled
-                            PreferenceUtil.updateValue(SPONSORBLOCK, isSponsorBlockEnabled)
-                        },
-                        onClick = { showSponsorBlockDialog = true })
-                }
-
-                if (downloadSubtitle) item {
-                    PreferenceInfo(text = stringResource(id = R.string.subtitle_sponsorblock))
-                }
             }
         })
-    if (showSponsorBlockDialog) {
-        SponsorBlockDialog {
-            showSponsorBlockDialog = false
-        }
-    }
     if (showYtdlpDialog) {
         var ytdlpUpdateChannel by YT_DLP_UPDATE_CHANNEL.intState
         var ytdlpAutoUpdate by YT_DLP_AUTO_UPDATE.booleanState
@@ -554,18 +343,6 @@ fun GeneralDownloadPreferences(
             }
         }
     }
-
-    if (showNotificationDialog) {
-        NotificationPermissionDialog(onDismissRequest = {
-            showNotificationDialog = false
-        }, onPermissionGranted = {
-            notificationPermission?.launchPermissionRequest()
-            NOTIFICATION.updateBoolean(true)
-            downloadNotification = true
-            showNotificationDialog = false
-        })
-    }
-
 }
 
 @Composable
@@ -598,13 +375,13 @@ private fun DialogSingleChoiceItem(
         Surface(
             modifier.padding(end = 12.dp),
             shape = CircleShape,
-            color = labelContainerColor
+            color = labelContainerColor,
+            contentColor = contentColorFor(backgroundColor = labelContainerColor),
         ) {
             Text(
-                modifier = Modifier.padding(4.dp),
                 text = label,
-                color = MaterialTheme.colorScheme.contentColorFor(labelContainerColor),
-                style = MaterialTheme.typography.labelSmall
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelMedium
             )
         }
     }
@@ -641,15 +418,15 @@ fun DialogCheckBoxItem(
 }
 
 @Composable
+@Preview
 private fun UpdateProgressIndicator() {
     CircularProgressIndicator(
         modifier = Modifier
             .padding(start = 8.dp, end = 16.dp)
-            .size(24.dp)
-            .padding(2.dp)
+            .size(24.dp),
+        strokeWidth = 3.dp
     )
 }
-
 
 @Composable
 fun DownloadArchiveDialog(
@@ -694,20 +471,7 @@ fun DownloadArchiveDialog(
                     minLines = 10,
                     maxLines = 10
                 )
-
-
             }
         }
     )
-}
-
-
-@Composable
-@Preview
-fun DownloadArchiveDialogPreview() {
-    val strs = buildList { repeat(20) { add("youtube IPf4AxotvNU") } }
-    val str = strs.fold(initial = "") { acc, text -> acc + text + "\n" }
-    DownloadArchiveDialog(
-        archiveFileContent = str,
-        onDismissRequest = { }) {}
 }

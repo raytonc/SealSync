@@ -6,20 +6,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArtTrack
 import androidx.compose.material.icons.outlined.AudioFile
-import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.HighQuality
-import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MusicNote
-import androidx.compose.material.icons.outlined.Sort
-import androidx.compose.material.icons.outlined.SpatialAudioOff
-import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Sync
-import androidx.compose.material.icons.outlined.VideoFile
-import androidx.compose.material.icons.outlined.VideoSettings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -32,13 +23,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import com.junkfood.seal.R
 import com.junkfood.seal.ui.common.booleanState
-import com.junkfood.seal.ui.common.intState
 import com.junkfood.seal.ui.component.BackButton
-import com.junkfood.seal.ui.component.ConfirmButton
-import com.junkfood.seal.ui.component.DismissButton
 import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.ui.component.PreferenceInfo
 import com.junkfood.seal.ui.component.PreferenceItem
@@ -48,30 +35,15 @@ import com.junkfood.seal.ui.component.PreferenceSwitchWithDivider
 import com.junkfood.seal.util.AUDIO_CONVERT
 import com.junkfood.seal.util.CROP_ARTWORK
 import com.junkfood.seal.util.CUSTOM_COMMAND
-import com.junkfood.seal.util.DownloadUtil
-import com.junkfood.seal.util.DownloadUtil.toFormatSorter
 import com.junkfood.seal.util.EMBED_METADATA
-import com.junkfood.seal.util.EMBED_SUBTITLE
 import com.junkfood.seal.util.EXTRACT_AUDIO
-import com.junkfood.seal.util.FORMAT_SELECTION
-import com.junkfood.seal.util.FORMAT_SORTING
-import com.junkfood.seal.util.MERGE_MULTI_AUDIO_STREAM
-import com.junkfood.seal.util.MERGE_OUTPUT_MKV
 import com.junkfood.seal.util.PreferenceStrings
 import com.junkfood.seal.util.PreferenceUtil
-import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
-import com.junkfood.seal.util.PreferenceUtil.updateInt
-import com.junkfood.seal.util.PreferenceUtil.updateString
-import com.junkfood.seal.util.SORTING_FIELDS
-import com.junkfood.seal.util.SUBTITLE
-import com.junkfood.seal.util.VIDEO_CLIP
-import com.junkfood.seal.util.VIDEO_FORMAT
-import com.junkfood.seal.util.VIDEO_QUALITY
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DownloadFormatPreferences(onNavigateBack: () -> Unit, navigateToSubtitlePage: () -> Unit) {
+fun DownloadFormatPreferences(onNavigateBack: () -> Unit) {
     val scrollBehavior =
         TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState(),
             canScroll = { true })
@@ -82,31 +54,16 @@ fun DownloadFormatPreferences(onNavigateBack: () -> Unit, navigateToSubtitlePage
     var isArtworkCroppingEnabled by remember {
         mutableStateOf(PreferenceUtil.getValue(CROP_ARTWORK))
     }
-    val downloadSubtitle by SUBTITLE.booleanState
-    val embedSubtitle by EMBED_SUBTITLE.booleanState
-    var remuxToMkv by MERGE_OUTPUT_MKV.booleanState
     var embedMetadata by EMBED_METADATA.booleanState
 
     var showAudioFormatDialog by remember { mutableStateOf(false) }
     var showAudioQualityDialog by remember { mutableStateOf(false) }
     var showAudioConvertDialog by remember { mutableStateOf(false) }
-    var showVideoQualityDialog by remember { mutableStateOf(false) }
-    var showVideoFormatDialog by remember { mutableStateOf(false) }
-    var showFormatSorterDialog by remember { mutableStateOf(false) }
-    var showVideoClipDialog by remember { mutableStateOf(false) }
 
-    var videoFormat by VIDEO_FORMAT.intState
-    var videoQuality by VIDEO_QUALITY.intState
     var convertFormat by remember { mutableStateOf(PreferenceStrings.getAudioConvertDesc()) }
-    var sortingFields by remember(showFormatSorterDialog) { mutableStateOf(SORTING_FIELDS.getString()) }
     val audioFormat by remember(showAudioFormatDialog) { mutableStateOf(PreferenceStrings.getAudioFormatDesc()) }
     var convertAudio by AUDIO_CONVERT.booleanState
-    var isFormatSortingEnabled by FORMAT_SORTING.booleanState
     val audioQuality by remember(showAudioQualityDialog) { mutableStateOf(PreferenceStrings.getAudioQualityDesc()) }
-    var isVideoClipEnabled by VIDEO_CLIP.booleanState
-    var isFormatSelectionEnabled by FORMAT_SELECTION.booleanState
-    var mergeAudioStream by MERGE_MULTI_AUDIO_STREAM.booleanState
-    var showMergeAudioDialog by remember { mutableStateOf(false) }
 
     Scaffold(modifier = Modifier
         .fillMaxSize()
@@ -154,7 +111,7 @@ fun DownloadFormatPreferences(onNavigateBack: () -> Unit, navigateToSubtitlePage
                     PreferenceItem(title = stringResource(id = R.string.audio_format_preference),
                         description = audioFormat,
                         icon = Icons.Outlined.AudioFile,
-                        enabled = !isCustomCommandEnabled && !isFormatSortingEnabled,
+                        enabled = !isCustomCommandEnabled,
                         onClick = { showAudioFormatDialog = true })
                 }
                 item {
@@ -163,7 +120,7 @@ fun DownloadFormatPreferences(onNavigateBack: () -> Unit, navigateToSubtitlePage
                         description = audioQuality,
                         icon = Icons.Outlined.HighQuality,
                         onClick = { showAudioQualityDialog = true },
-                        enabled = !isCustomCommandEnabled && !isFormatSortingEnabled
+                        enabled = !isCustomCommandEnabled
                     )
                 }
                 item {
@@ -203,131 +160,6 @@ fun DownloadFormatPreferences(onNavigateBack: () -> Unit, navigateToSubtitlePage
                         PreferenceUtil.updateValue(CROP_ARTWORK, isArtworkCroppingEnabled)
                     }
                 }
-                item {
-                    PreferenceSubtitle(text = stringResource(id = R.string.video))
-                }
-                item {
-                    PreferenceItem(
-                        title = stringResource(R.string.video_format_preference),
-                        description = PreferenceStrings.getVideoFormatLabel(videoFormat),
-                        icon = Icons.Outlined.VideoFile,
-                        enabled = !audioSwitch && !isCustomCommandEnabled && !isFormatSortingEnabled
-                    ) { showVideoFormatDialog = true }
-                }
-                item {
-                    PreferenceItem(
-                        title = stringResource(id = R.string.video_quality),
-                        description = PreferenceStrings.getVideoResolutionDescComp(videoQuality),
-                        icon = Icons.Outlined.HighQuality,
-                        enabled = !audioSwitch && !isCustomCommandEnabled && !isFormatSortingEnabled
-                    ) { showVideoQualityDialog = true }
-                }/*                item {
-                                    var embedThumbnail by EMBED_THUMBNAIL.booleanState
-
-                                    PreferenceSwitch(
-                                        title = stringResource(id = R.string.embed_thumbnail),
-                                        description = stringResource(id = R.string.embed_thumbnail_desc),
-                                        icon = Icons.Outlined.Photo,
-                                        isChecked = embedThumbnail,
-                                        enabled = !isCustomCommandEnabled && !audioSwitch
-                                    ) {
-                                        embedThumbnail = !embedThumbnail
-                                        EMBED_THUMBNAIL.updateBoolean(embedThumbnail)
-                                    }
-                                }*/
-
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(id = R.string.remux_container_mkv),
-                        description = stringResource(
-                            id = R.string.remux_container_mkv_desc
-                        ),
-                        isChecked = (downloadSubtitle && embedSubtitle) || remuxToMkv,
-                        icon = Icons.Outlined.Movie,
-                        enabled = !(downloadSubtitle && embedSubtitle) && !isCustomCommandEnabled && !audioSwitch,
-                        onClick = {
-                            remuxToMkv = !remuxToMkv
-                            MERGE_OUTPUT_MKV.updateBoolean(remuxToMkv)
-                        },
-                    )
-                }
-                if (downloadSubtitle && embedSubtitle) {
-                    item {
-                        PreferenceInfo(text = stringResource(id = R.string.embed_subtitles_mkv_msg))
-                    }
-                }
-
-                item {
-                    PreferenceSubtitle(text = stringResource(id = R.string.advanced_settings))
-                }
-                item {
-
-                    PreferenceItem(
-                        title = stringResource(id = R.string.subtitle),
-                        icon = Icons.Outlined.Subtitles,
-                        enabled = !isCustomCommandEnabled,
-                        description = stringResource(id = R.string.subtitle_desc),
-                    ) { navigateToSubtitlePage() }
-                }
-                item {
-                    PreferenceSwitchWithDivider(title = stringResource(id = R.string.format_sorting),
-                        icon = Icons.Outlined.Sort,
-                        description = stringResource(id = R.string.format_sorting_desc),
-                        enabled = !isCustomCommandEnabled,
-                        isChecked = isFormatSortingEnabled,
-                        onChecked = {
-                            isFormatSortingEnabled = !isFormatSortingEnabled
-                            FORMAT_SORTING.updateBoolean(isFormatSortingEnabled)
-                        },
-                        onClick = { showFormatSorterDialog = true })
-                }
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(id = R.string.format_selection),
-                        icon = Icons.Outlined.VideoSettings,
-                        enabled = !isCustomCommandEnabled,
-                        description = stringResource(id = R.string.format_selection_desc),
-                        isChecked = isFormatSelectionEnabled
-                    ) {
-                        isFormatSelectionEnabled = !isFormatSelectionEnabled
-                        PreferenceUtil.updateValue(FORMAT_SELECTION, isFormatSelectionEnabled)
-                    }
-                }
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(id = R.string.clip_video),
-                        description = stringResource(
-                            id = R.string.clip_video_desc
-                        ),
-                        icon = Icons.Outlined.ContentCut,
-                        isChecked = isVideoClipEnabled,
-                        enabled = !isCustomCommandEnabled && isFormatSelectionEnabled
-                    ) {
-                        if (!isVideoClipEnabled) showVideoClipDialog = true
-                        else {
-                            isVideoClipEnabled = false
-                            VIDEO_CLIP.updateBoolean(false)
-                        }
-                    }
-                }
-                item {
-                    PreferenceSwitch(
-                        title = stringResource(id = R.string.merge_audiostream),
-                        description = stringResource(
-                            id = R.string.merge_audiostream_desc
-                        ), isChecked = mergeAudioStream,
-                        icon = Icons.Outlined.SpatialAudioOff,
-                        onClick = {
-                            if (mergeAudioStream) {
-                                mergeAudioStream = false
-                                MERGE_MULTI_AUDIO_STREAM.updateBoolean(false)
-                            } else {
-                                showMergeAudioDialog = true
-                            }
-                        },
-                        enabled = !isCustomCommandEnabled && isFormatSelectionEnabled
-                    )
-                }
             }
         })
     if (showAudioFormatDialog) {
@@ -340,83 +172,5 @@ fun DownloadFormatPreferences(onNavigateBack: () -> Unit, navigateToSubtitlePage
         AudioConversionDialog(onDismissRequest = { showAudioConvertDialog = false }) {
             convertFormat = PreferenceStrings.getAudioConvertDesc()
         }
-    }
-    if (showVideoQualityDialog) {
-        VideoQualityDialog(videoQuality = videoQuality,
-            onDismissRequest = { showVideoQualityDialog = false }) {
-            videoQuality = it
-            VIDEO_QUALITY.updateInt(it)
-        }
-    }
-    if (showVideoFormatDialog) {
-        VideoFormatDialog(videoFormatPreference = videoFormat, onDismissRequest = {
-            showVideoFormatDialog = false
-        }) {
-            PreferenceUtil.encodeInt(VIDEO_FORMAT, it)
-            videoFormat = it
-        }
-    }
-    if (showFormatSorterDialog) {
-        FormatSortingDialog(
-            fields = sortingFields,
-            onImport = {
-                sortingFields = DownloadUtil.DownloadPreferences().toFormatSorter()
-            },
-            onDismissRequest = { showFormatSorterDialog = false },
-            showSwitch = false, onConfirm = {
-                sortingFields = it
-                SORTING_FIELDS.updateString(sortingFields)
-            }
-        )
-    }
-    if (showVideoClipDialog) {
-        AlertDialog(onDismissRequest = { showVideoClipDialog = false },
-            icon = { Icon(Icons.Outlined.ContentCut, null) },
-            confirmButton = {
-                ConfirmButton {
-                    isVideoClipEnabled = true
-                    VIDEO_CLIP.updateBoolean(true)
-                    showVideoClipDialog = false
-                }
-            },
-            dismissButton = {
-                DismissButton {
-                    showVideoClipDialog = false
-                }
-            },
-            text = {
-                Text(stringResource(id = R.string.clip_video_dialog_msg))
-            },
-            title = {
-                Text(
-                    stringResource(id = R.string.enable_experimental_feature),
-                    textAlign = TextAlign.Center
-                )
-            })
-    }
-    if (showMergeAudioDialog) {
-        AlertDialog(onDismissRequest = { showMergeAudioDialog = false },
-            icon = { Icon(Icons.Outlined.SpatialAudioOff, null) },
-            confirmButton = {
-                ConfirmButton {
-                    mergeAudioStream = true
-                    MERGE_MULTI_AUDIO_STREAM.updateBoolean(true)
-                    showMergeAudioDialog = false
-                }
-            },
-            dismissButton = {
-                DismissButton {
-                    showMergeAudioDialog = false
-                }
-            },
-            text = {
-                Text(stringResource(id = R.string.merge_audiostream_desc))
-            },
-            title = {
-                Text(
-                    stringResource(id = R.string.enable_experimental_feature),
-                    textAlign = TextAlign.Center
-                )
-            })
     }
 }

@@ -47,18 +47,9 @@ import com.junkfood.seal.ui.page.download.DownloadViewModel
 import com.junkfood.seal.ui.page.settings.SettingsPage
 import com.junkfood.seal.ui.page.settings.about.AboutPage
 import com.junkfood.seal.ui.page.settings.about.CreditsPage
-import com.junkfood.seal.ui.page.settings.about.DonatePage
-import com.junkfood.seal.ui.page.settings.about.UpdatePage
-import com.junkfood.seal.ui.page.settings.appearance.AppearancePreferences
-import com.junkfood.seal.ui.page.settings.appearance.DarkThemePreferences
-import com.junkfood.seal.ui.page.settings.appearance.LanguagePage
-import com.junkfood.seal.ui.page.settings.command.TemplateEditPage
-import com.junkfood.seal.ui.page.settings.command.TemplateListPage
 import com.junkfood.seal.ui.page.settings.directory.DownloadDirectoryPreferences
 import com.junkfood.seal.ui.page.settings.format.DownloadFormatPreferences
-import com.junkfood.seal.ui.page.settings.format.SubtitlePreference
 import com.junkfood.seal.ui.page.settings.general.GeneralDownloadPreferences
-import com.junkfood.seal.ui.page.settings.interaction.InteractionPreferencePage
 import com.junkfood.seal.ui.page.settings.network.CookieProfilePage
 import com.junkfood.seal.ui.page.settings.network.CookiesViewModel
 import com.junkfood.seal.ui.page.settings.network.NetworkPreferences
@@ -176,10 +167,6 @@ fun HomeEntry(
 
         }
 
-        WelcomeDialog {
-            navController.navigate(Route.SETTINGS)
-        }
-
         val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
 
         LaunchedEffect(Unit) {
@@ -278,48 +265,22 @@ fun NavGraphBuilder.settingsGraph(
         }
         animatedComposable(Route.GENERAL_DOWNLOAD_PREFERENCES) {
             GeneralDownloadPreferences(
-                onNavigateBack = { onNavigateBack() },
-            ) { onNavigateTo(Route.TEMPLATE) }
+                onNavigateBack = { onNavigateBack() }
+            )
         }
         animatedComposable(Route.DOWNLOAD_FORMAT) {
-            DownloadFormatPreferences(onNavigateBack = onNavigateBack) {
-                onNavigateTo(Route.SUBTITLE_PREFERENCES)
-            }
+            DownloadFormatPreferences(onNavigateBack = onNavigateBack)
         }
-        animatedComposable(Route.SUBTITLE_PREFERENCES) { SubtitlePreference { onNavigateBack() } }
         animatedComposable(Route.ABOUT) {
             AboutPage(
                 onNavigateBack = onNavigateBack,
-                onNavigateToCreditsPage = { onNavigateTo(Route.CREDITS) },
-                onNavigateToUpdatePage = { onNavigateTo(Route.AUTO_UPDATE) },
-                onNavigateToDonatePage = { onNavigateTo(Route.DONATE) })
-        }
-        animatedComposable(Route.DONATE) { DonatePage(onNavigateBack) }
-        animatedComposable(Route.CREDITS) { CreditsPage(onNavigateBack) }
-        animatedComposable(Route.AUTO_UPDATE) { UpdatePage(onNavigateBack) }
-        animatedComposable(Route.APPEARANCE) {
-            AppearancePreferences(
-                onNavigateBack = onNavigateBack,
-                onNavigateTo = onNavigateTo
+                onNavigateToCreditsPage = { onNavigateTo(Route.CREDITS) }
             )
         }
-        animatedComposable(Route.INTERACTION) { InteractionPreferencePage(onBack = onNavigateBack) }
-        animatedComposable(Route.LANGUAGES) { LanguagePage { onNavigateBack() } }
+        animatedComposable(Route.CREDITS) { CreditsPage(onNavigateBack) }
         animatedComposable(Route.DOWNLOAD_DIRECTORY) {
             DownloadDirectoryPreferences { onNavigateBack() }
         }
-        animatedComposable(Route.TEMPLATE) {
-            TemplateListPage(onNavigateBack = onNavigateBack) {
-                onNavigateTo(Route.TEMPLATE_EDIT id it)
-            }
-        }
-        animatedComposable(
-            Route.TEMPLATE_EDIT arg Route.TEMPLATE_ID,
-            arguments = listOf(navArgument(Route.TEMPLATE_ID) { type = NavType.IntType })
-        ) {
-            TemplateEditPage(onNavigateBack, it.arguments?.getInt(Route.TEMPLATE_ID) ?: -1)
-        }
-        animatedComposable(Route.DARK_THEME) { DarkThemePreferences { onNavigateBack() } }
         animatedComposable(Route.NETWORK_PREFERENCES) {
             NetworkPreferences(navigateToCookieProfilePage = {
                 onNavigateTo(Route.COOKIE_PROFILE)

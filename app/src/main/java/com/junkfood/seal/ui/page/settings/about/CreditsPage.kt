@@ -38,6 +38,7 @@ const val APACHE_V2 = "Apache License, Version 2.0"
 const val UNLICENSE = "The Unlicense"
 const val BSD = "BSD 3-Clause License"
 
+const val sealUpstreamUrl = "https://github.com/JunkFood02/Seal"
 const val youtubedlAndroidUrl = "https://github.com/yausername/youtubedl-android"
 const val ytdlpUrl = "https://github.com/yt-dlp/yt-dlp"
 const val readYou = "https://github.com/Ashinch/ReadYou"
@@ -69,6 +70,7 @@ fun CreditsPage(onNavigateBack: () -> Unit) {
     )
 
     val creditsList = listOf(
+        Credit("Seal (upstream)", GPL_V3, sealUpstreamUrl),
         Credit("Android Jetpack", APACHE_V2, jetpack),
         Credit("Kotlin", APACHE_V2, kotlin),
         Credit("youtubedl-android", GPL_V3, youtubedlAndroidUrl),

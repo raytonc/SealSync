@@ -115,6 +115,7 @@ class App : Application() {
 
         private val connection = object : ServiceConnection {
             override fun onServiceConnected(className: ComponentName, service: IBinder) {
+                @Suppress("UNUSED_VARIABLE")
                 val binder = service as DownloadService.DownloadServiceBinder
                 isServiceRunning = true
             }
@@ -156,27 +157,6 @@ class App : Application() {
                     audioDownloadDir = path
                     PreferenceUtil.encodeString(AUDIO_DIRECTORY, path)
                 }
-
-                Directory.VIDEO -> {
-                    val path = FileUtil.getRealPath(uri)
-                    videoDownloadDir = path
-                    PreferenceUtil.encodeString(VIDEO_DIRECTORY, path)
-                }
-
-                Directory.CUSTOM_COMMAND -> {
-                    val path = FileUtil.getRealPath(uri)
-
-
-                }
-
-                Directory.SDCARD -> {
-                    context.contentResolver?.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                    )
-                    PreferenceUtil.encodeString(SDCARD_URI, uri.toString())
-
-                }
             }
         }
 
@@ -185,6 +165,7 @@ class App : Application() {
             val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 packageInfo.longVersionCode
             } else {
+                @Suppress("DEPRECATION")
                 packageInfo.versionCode.toLong()
             }
             val release = if (Build.VERSION.SDK_INT >= 30) {

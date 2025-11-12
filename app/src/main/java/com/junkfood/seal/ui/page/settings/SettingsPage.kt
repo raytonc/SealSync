@@ -21,13 +21,10 @@ import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.EnergySavingsLeaf
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.SettingsApplications
 import androidx.compose.material.icons.rounded.SignalCellular4Bar
 import androidx.compose.material.icons.rounded.SignalWifi4Bar
-import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.VideoFile
-import androidx.compose.material.icons.rounded.ViewComfy
 import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -191,38 +188,6 @@ fun SettingsPage(
                 }
             }
             item {
-                SettingItem(
-                    title = stringResource(id = R.string.custom_command),
-                    description = stringResource(id = R.string.custom_command_desc),
-                    icon = Icons.Rounded.Terminal
-                ) {
-                    onNavigateTo(Route.TEMPLATE)
-                }
-            }
-            item {
-                SettingItem(
-                    title = stringResource(id = R.string.look_and_feel),
-                    description = stringResource(
-                        id = R.string.display_settings
-                    ),
-                    icon = Icons.Rounded.Palette
-                ) {
-                    onNavigateTo(Route.APPEARANCE)
-                }
-            }
-            item {
-                SettingItem(
-                    title = stringResource(id = R.string.interface_and_interaction),
-                    description = stringResource(
-                        id = R.string.settings_before_download
-                    ),
-                    icon = Icons.Rounded.ViewComfy
-                ) {
-                    onNavigateTo(Route.INTERACTION)
-                }
-            }
-            item {
-
                 SettingItem(
                     title = stringResource(id = R.string.about), description = stringResource(
                         id = R.string.about_page
