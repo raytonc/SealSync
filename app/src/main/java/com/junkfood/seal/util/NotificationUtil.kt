@@ -38,6 +38,10 @@ object NotificationUtil {
     const val SERVICE_NOTIFICATION_ID = 123
     private lateinit var serviceNotification: Notification
 
+    // Throttling for progress notifications
+    private val lastNotificationTime = mutableMapOf<Int, Long>()
+    private const val NOTIFICATION_THROTTLE_MS = 300L  // 300ms = ~3 updates/sec max
+
     //    private var builder =
 //        NotificationCompat.Builder(context, CHANNEL_ID).setSmallIcon(R.drawable.ic_stat_seal)
     private val commandNotificationBuilder =
@@ -71,6 +75,15 @@ object NotificationUtil {
         text: String? = null
     ) {
         if (!PreferenceUtil.getValue(NOTIFICATION)) return
+
+        // Throttle notifications to prevent spam (except for start/end: 0% and 100%)
+        val currentTime = System.currentTimeMillis()
+        val lastTime = lastNotificationTime[notificationId] ?: 0L
+        if (currentTime - lastTime < NOTIFICATION_THROTTLE_MS && progress !in listOf(0, 100)) {
+            return
+        }
+        lastNotificationTime[notificationId] = currentTime
+
         val pendingIntent = taskId?.let {
             Intent(context.applicationContext, NotificationActionReceiver::class.java)
                 .putExtra(TASK_ID_KEY, taskId)

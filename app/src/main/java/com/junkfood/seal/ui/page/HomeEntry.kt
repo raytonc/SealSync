@@ -42,12 +42,8 @@ import com.junkfood.seal.ui.common.animatedComposableVariant
 import com.junkfood.seal.ui.common.arg
 import com.junkfood.seal.ui.common.id
 import com.junkfood.seal.ui.common.slideInVerticallyComposable
-import com.junkfood.seal.ui.page.command.TaskListPage
-import com.junkfood.seal.ui.page.command.TaskLogPage
 import com.junkfood.seal.ui.page.download.DownloadPage
 import com.junkfood.seal.ui.page.download.DownloadViewModel
-import com.junkfood.seal.ui.page.download.FormatPage
-import com.junkfood.seal.ui.page.download.PlaylistSelectionPage
 import com.junkfood.seal.ui.page.settings.SettingsPage
 import com.junkfood.seal.ui.page.settings.about.AboutPage
 import com.junkfood.seal.ui.page.settings.about.CreditsPage
@@ -164,36 +160,10 @@ fun HomeEntry(
                             launchSingleTop = true
                         }
                     },
-                    navigateToPlaylistPage = { navController.navigate(Route.PLAYLIST) },
-                    navigateToFormatPage = { navController.navigate(Route.FORMAT_SELECTION) },
-                    onNavigateToTaskList = { navController.navigate(Route.TASK_LIST) },
-                    onNavigateToCookieGeneratorPage = {
-                        cookiesViewModel.updateUrl(it)
-                        navController.navigate(Route.COOKIE_GENERATOR_WEBVIEW)
-                    },
                     downloadViewModel = downloadViewModel
                 )
             }
             animatedComposable(Route.DOWNLOADS) { VideoListPage { onNavigateBack() } }
-            animatedComposableVariant(Route.TASK_LIST) {
-                TaskListPage(
-                    onNavigateBack = onNavigateBack,
-                    onNavigateToDetail = { navController.navigate(Route.TASK_LOG id it) }
-                )
-            }
-            slideInVerticallyComposable(
-                Route.TASK_LOG arg Route.TASK_HASHCODE,
-                arguments = listOf(navArgument(Route.TASK_HASHCODE) { type = NavType.IntType })
-            ) {
-                TaskLogPage(
-                    onNavigateBack = onNavigateBack,
-                    taskHashCode = it.arguments?.getInt(Route.TASK_HASHCODE) ?: -1
-                )
-            }
-
-//            animatedComposable(Route.DOWNLOAD_QUEUE) { DownloadQueuePage { onNavigateBack() } }
-            slideInVerticallyComposable(Route.PLAYLIST) { PlaylistSelectionPage { onNavigateBack() } }
-            slideInVerticallyComposable(Route.FORMAT_SELECTION) { FormatPage(downloadViewModel) { onNavigateBack() } }
             settingsGraph(
                 cookiesViewModel = cookiesViewModel,
                 onNavigateBack = onNavigateBack,

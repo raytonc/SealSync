@@ -13,7 +13,9 @@ import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.App.Companion.startService
 import com.junkfood.seal.App.Companion.stopService
 import com.junkfood.seal.database.objects.CommandTemplate
+import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.COMMAND_DIRECTORY
+import com.junkfood.seal.util.CONVERT_M4A
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.Entries
 import com.junkfood.seal.util.FileUtil
@@ -617,6 +619,146 @@ object Downloader {
                     )
                 }
             }
+            finishProcessing()
+        }
+    }
+
+    /**
+     * Downloads audio from all videos in all provided playlists
+     * @param playlists List of playlist entries to download from
+     */
+    fun downloadAllPlaylists(playlists: List<PlaylistEntry>) {
+        if (!isDownloaderAvailable()) return
+        if (playlists.isEmpty()) {
+            ToastUtil.makeToast("No playlists to download")
+            return
+        }
+
+        Log.d(TAG, "downloadAllPlaylists: Starting download for ${playlists.size} playlists")
+        mutableDownloaderState.update { State.DownloadingPlaylist() }
+
+        currentJob = applicationScope.launch(Dispatchers.IO) {
+            val preferences = DownloadUtil.DownloadPreferences(
+                extractAudio = true,
+                convertAudio = true,
+                audioConvertFormat = CONVERT_M4A,
+                embedMetadata = true
+            )
+
+            for ((playlistNum, playlistEntry) in playlists.withIndex()) {
+                if (downloaderState.value !is State.DownloadingPlaylist) {
+                    Log.d(TAG, "downloadAllPlaylists: Download cancelled")
+                    return@launch
+                }
+
+                Log.d(TAG, "downloadAllPlaylists: Processing playlist ${playlistNum + 1}/${playlists.size}: '${playlistEntry.title}'")
+
+                // Fetch playlist info to get the number of entries
+                DownloadUtil.getPlaylistOrVideoInfo(
+                    playlistURL = playlistEntry.url,
+                    downloadPreferences = preferences
+                ).onSuccess { info ->
+                    when (info) {
+                        is PlaylistResult -> {
+                            val entries = info.entries ?: emptyList()
+                            val itemCount = entries.size
+
+                            if (itemCount == 0) {
+                                Log.d(TAG, "downloadAllPlaylists: Playlist '${playlistEntry.title}' is empty, skipping")
+                                ToastUtil.makeToastSuspend("Playlist '${playlistEntry.title}' is empty")
+                            } else {
+                                Log.d(TAG, "downloadAllPlaylists: Playlist '${playlistEntry.title}' has $itemCount videos")
+
+                                // Download each video in the playlist
+                                for (i in entries.indices) {
+                                    if (downloaderState.value !is State.DownloadingPlaylist) {
+                                        Log.d(TAG, "downloadAllPlaylists: Download cancelled")
+                                        return@launch
+                                    }
+
+                                    mutableDownloaderState.update {
+                                        if (it is State.DownloadingPlaylist)
+                                            it.copy(currentItem = i + 1, itemCount = itemCount)
+                                        else return@launch
+                                    }
+
+                                    NotificationUtil.updateServiceNotificationForPlaylist(
+                                        index = i + 1, itemCount = itemCount
+                                    )
+
+                                    val playlistIndex = i + 1
+                                    val playlistItem = entries.getOrNull(i)
+
+                                    Log.d(TAG, "downloadAllPlaylists: [${i + 1}/$itemCount] ${playlistItem?.title}")
+
+                                    // Fetch video info using playlist URL and item index (same as downloadVideoInPlaylistByIndexList)
+                                    DownloadUtil.fetchVideoInfoFromUrl(
+                                        url = playlistEntry.url,
+                                        playlistItem = playlistIndex,
+                                        preferences = preferences
+                                    ).onSuccess { videoInfo ->
+                                        if (downloaderState.value !is State.DownloadingPlaylist)
+                                            return@launch
+
+                                        downloadResultTemp = downloadVideo(
+                                            videoInfo = videoInfo,
+                                            playlistIndex = playlistIndex,
+                                            playlistUrl = playlistEntry.url,
+                                            preferences = preferences,
+                                        ).onFailure { th ->
+                                            manageDownloadError(
+                                                th = th,
+                                                url = videoInfo.originalUrl,
+                                                title = videoInfo.title,
+                                                isFetchingInfo = false,
+                                                isTaskAborted = false
+                                            )
+                                        }
+                                    }.onFailure { th ->
+                                        manageDownloadError(
+                                            th = th,
+                                            url = playlistItem?.url,
+                                            title = playlistItem?.title,
+                                            isFetchingInfo = true,
+                                            isTaskAborted = false
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        is VideoInfo -> {
+                            // Single video (not a playlist)
+                            Log.d(TAG, "downloadAllPlaylists: '${playlistEntry.title}' is a single video, not a playlist")
+                            if (downloaderState.value !is State.DownloadingPlaylist)
+                                return@launch
+
+                            downloadResultTemp = downloadVideo(
+                                videoInfo = info,
+                                preferences = preferences
+                            ).onFailure { th ->
+                                manageDownloadError(
+                                    th = th,
+                                    url = info.originalUrl,
+                                    title = info.title,
+                                    isFetchingInfo = false,
+                                    isTaskAborted = false
+                                )
+                            }
+                        }
+                    }
+                }.onFailure { th ->
+                    Log.e(TAG, "downloadAllPlaylists: Failed to fetch info for '${playlistEntry.title}': ${th.message}")
+                    manageDownloadError(
+                        th = th,
+                        url = playlistEntry.url,
+                        title = playlistEntry.title,
+                        isFetchingInfo = true,
+                        isTaskAborted = false
+                    )
+                }
+            }
+
+            Log.d(TAG, "downloadAllPlaylists: Finished processing all playlists")
             finishProcessing()
         }
     }

@@ -10,6 +10,7 @@ import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.CookieProfile
 import com.junkfood.seal.database.objects.DownloadedVideoInfo
 import com.junkfood.seal.database.objects.OptionShortcut
+import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.FileUtil
 import kotlinx.coroutines.flow.Flow
 
@@ -114,4 +115,20 @@ interface VideoInfoDao {
     @Transaction
     @Insert
     suspend fun insertAllShortcuts(shortcuts: List<OptionShortcut>)
+
+    // Playlist operations
+    @Query("SELECT * FROM PlaylistEntry ORDER BY dateAdded DESC")
+    fun getPlaylistsFlow(): Flow<List<PlaylistEntry>>
+
+    @Query("SELECT * FROM PlaylistEntry ORDER BY dateAdded DESC")
+    suspend fun getPlaylists(): List<PlaylistEntry>
+
+    @Insert
+    suspend fun insertPlaylist(playlist: PlaylistEntry): Long
+
+    @Delete
+    suspend fun deletePlaylist(playlist: PlaylistEntry)
+
+    @Query("DELETE FROM PlaylistEntry WHERE id = :id")
+    suspend fun deletePlaylistById(id: Int)
 }

@@ -11,6 +11,7 @@ import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.CookieProfile
 import com.junkfood.seal.database.objects.DownloadedVideoInfo
 import com.junkfood.seal.database.objects.OptionShortcut
+import com.junkfood.seal.database.objects.PlaylistEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -129,6 +130,16 @@ object DatabaseUtil {
 
     suspend fun deleteTemplates(templates: List<CommandTemplate>) = dao.deleteTemplates(templates)
 
+    // Playlist operations
+    fun getPlaylistsFlow() = dao.getPlaylistsFlow()
+
+    suspend fun getPlaylists() = dao.getPlaylists()
+
+    suspend fun insertPlaylist(playlist: PlaylistEntry) = dao.insertPlaylist(playlist)
+
+    suspend fun deletePlaylist(playlist: PlaylistEntry) = dao.deletePlaylist(playlist)
+
+    suspend fun deletePlaylistById(id: Int) = dao.deletePlaylistById(id)
 
     private const val TAG = "DatabaseUtil"
 }
