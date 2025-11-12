@@ -38,7 +38,7 @@
     <string name="remove">Remove</string>
     <string name="delete_file">Delete file</string>
     <string name="about">About</string>
-    <string name="about_page">Version, feedback, auto update</string>
+    <string name="about_page">README and Credits</string>
     <string name="back">Back</string>
     <string name="version">Version</string>
     <string name="release_desc">Look for changelogs and new versions</string>
