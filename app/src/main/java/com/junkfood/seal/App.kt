@@ -15,7 +15,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.content.getSystemService
 import com.google.android.material.color.DynamicColors
-import com.junkfood.seal.ui.page.settings.directory.Directory
+import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.AUDIO_DIRECTORY
 import com.junkfood.seal.util.COMMAND_DIRECTORY
 import com.junkfood.seal.util.DownloadUtil
@@ -28,7 +28,6 @@ import com.junkfood.seal.util.NotificationUtil
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateString
-import com.junkfood.seal.util.SDCARD_URI
 import com.junkfood.seal.util.UpdateUtil
 import com.junkfood.seal.util.VIDEO_DIRECTORY
 import com.junkfood.seal.util.YT_DLP_VERSION
@@ -115,8 +114,9 @@ class App : Application() {
 
         private val connection = object : ServiceConnection {
             override fun onServiceConnected(className: ComponentName, service: IBinder) {
-                @Suppress("UNUSED_VARIABLE")
-                val binder = service as DownloadService.DownloadServiceBinder
+                // binder intentionally not needed here; just mark service running
+                @Suppress("UNCHECKED_CAST")
+                service as DownloadService.DownloadServiceBinder
                 isServiceRunning = true
             }
 
@@ -127,7 +127,7 @@ class App : Application() {
         fun startService() {
             if (isServiceRunning) return
             Intent(context.applicationContext, DownloadService::class.java).also { intent ->
-                context.applicationContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+                context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
             }
         }
 

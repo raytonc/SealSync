@@ -28,7 +28,7 @@ import java.io.File
 import java.nio.charset.Charset
 import java.util.Date
 
-const val AUDIO_REGEX = "(mp3|aac|opus|m4a)$"
+const val AUDIO_REGEX = "(mp3|aac|opus|m4a|wav)$"
 const val THUMBNAIL_REGEX = "\\.(jpg|png)$"
 const val SUBTITLE_REGEX = "\\.(lrc|vtt|srt|ass|json3|srv.|ttml)$"
 private const val PRIVATE_DIRECTORY_SUFFIX = ".Seal"

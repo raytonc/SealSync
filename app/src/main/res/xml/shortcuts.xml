@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="sync_shortcut"
+        android:enabled="true"
+        android:icon="@mipmap/ic_sync"
+        android:shortcutShortLabel="@string/shortcut_sync_short"
+        android:shortcutLongLabel="@string/shortcut_sync_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.junkfood.seal"
+            android:targetClass="com.junkfood.seal.ui.shortcut.SyncShortcutActivity"/>
+    </shortcut>
+</shortcuts>

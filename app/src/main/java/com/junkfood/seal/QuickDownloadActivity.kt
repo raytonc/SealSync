@@ -91,11 +91,6 @@ class QuickDownloadActivity : ComponentActivity() {
             }
         }
         handleShareIntent(intent)
-        runBlocking {
-            if (Build.VERSION.SDK_INT < 33) {
-                setLanguage(PreferenceUtil.getLocaleFromPreference())
-            }
-        }
         val isDialogEnabled = CONFIGURE.getBoolean()
 
         if (url.isEmpty()) {

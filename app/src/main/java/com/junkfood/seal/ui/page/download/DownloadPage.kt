@@ -122,8 +122,7 @@ fun DownloadPage(
         if (!PreferenceUtil.isNetworkAvailableForDownload()) {
             showMeteredNetworkDialog = true
         } else {
-            // TODO: Trigger download all playlists
-            Downloader.downloadAllPlaylists(playlists)
+            Downloader.syncPlaylists(playlists)
         }
     }
 
@@ -147,6 +146,9 @@ fun DownloadPage(
 
     val downloadAllCallback = downloadAllCallback@{
         view.slightHapticFeedback()
+        if (downloaderState is Downloader.State.DownloadingPlaylist) {
+            return@downloadAllCallback
+        }
         if (playlists.isEmpty()) {
             ToastUtil.makeToast("No playlists to download")
             return@downloadAllCallback
@@ -174,11 +176,11 @@ fun DownloadPage(
         MeteredNetworkDialog(
             onDismissRequest = { showMeteredNetworkDialog = false },
             onAllowOnceConfirm = {
-                Downloader.downloadAllPlaylists(playlists)
+                Downloader.syncPlaylists(playlists)
                 showMeteredNetworkDialog = false
             },
             onAllowAlwaysConfirm = {
-                Downloader.downloadAllPlaylists(playlists)
+                Downloader.syncPlaylists(playlists)
                 CELLULAR_DOWNLOAD.updateBoolean(true)
                 showMeteredNetworkDialog = false
             }
@@ -249,17 +251,20 @@ fun DownloadPage(
                     .imePadding(),
                 horizontalAlignment = Alignment.End
             ) {
-                FloatingActionButton(
+                ExtendedFloatingActionButton(
                     onClick = { showAddPlaylistDialog = true },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = "Add Playlist") },
+                    text = { Text("Add playlist") },
                     modifier = Modifier.padding(vertical = 8.dp)
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = "Add Playlist")
-                }
+                )
+                val isSyncing = downloaderState is Downloader.State.DownloadingPlaylist
                 ExtendedFloatingActionButton(
                     onClick = downloadAllCallback,
-                    icon = { Icon(Icons.Outlined.DownloadForOffline, contentDescription = "Download All") },
-                    text = { Text("Download All") },
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    icon = { Icon(Icons.Outlined.DownloadForOffline, contentDescription = "Sync") },
+                    text = { Text("Sync folder") },
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    containerColor = if (isSyncing) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = if (isSyncing) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
         }

@@ -1,7 +1,14 @@
+@file:OptIn(ExperimentalPermissionsApi::class)
+
 package com.junkfood.seal.ui.page.settings.general
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -17,9 +25,12 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.LibraryMusic
+import androidx.compose.material.icons.outlined.NetworkCell
+import androidx.compose.material.icons.outlined.NetworkWifi
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SlowMotionVideo
 import androidx.compose.material.icons.outlined.SyncAlt
 import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material3.Checkbox
@@ -34,6 +45,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -54,7 +67,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
@@ -66,20 +78,27 @@ import com.junkfood.seal.ui.common.intState
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.ConfirmButton
 import com.junkfood.seal.ui.component.DismissButton
+import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.ui.component.PreferenceInfo
 import com.junkfood.seal.ui.component.PreferenceItem
+import com.junkfood.seal.ui.component.PreferenceSubtitle
+import com.junkfood.seal.ui.component.PreferenceSwitch
 import com.junkfood.seal.ui.component.PreferenceSwitchWithDivider
 import com.junkfood.seal.ui.component.SealDialog
+import com.junkfood.seal.util.CELLULAR_DOWNLOAD
 import com.junkfood.seal.util.CUSTOM_COMMAND
-import com.junkfood.seal.util.DOWNLOAD_ARCHIVE
-import com.junkfood.seal.util.FileUtil.getArchiveFile
+import com.junkfood.seal.util.FileUtil
+import com.junkfood.seal.util.MAX_RATE
 import com.junkfood.seal.util.PreferenceStrings.getUpdateIntervalText
 import com.junkfood.seal.util.PreferenceUtil
+import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.getLong
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateInt
 import com.junkfood.seal.util.PreferenceUtil.updateLong
+import com.junkfood.seal.util.PreferenceUtil.updateString
+import com.junkfood.seal.util.RATE_LIMIT
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.UpdateIntervalList
 import com.junkfood.seal.util.UpdateUtil
@@ -94,23 +113,37 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(
-    ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class
-)
+enum class Directory {
+    AUDIO
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GeneralDownloadPreferences(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
+    // General settings state
     var showYtdlpDialog by remember { mutableStateOf(false) }
     var isUpdating by remember { mutableStateOf(false) }
 
-    var useDownloadArchive by DOWNLOAD_ARCHIVE.booleanState
-    var showClearArchiveDialog by remember { mutableStateOf(false) }
-    var archiveFileContent by remember {
-        mutableStateOf("")
+    // Directory settings state
+    var audioDirectoryText by remember { mutableStateOf(App.audioDownloadDir) }
+    var editingDirectory by remember { mutableStateOf(Directory.AUDIO) }
+
+    // Format settings state
+
+    // Network settings state
+    var isRateLimitEnabled by RATE_LIMIT.booleanState
+    var maxDownloadRate by remember { mutableStateOf(MAX_RATE.getString()) }
+    var showRateLimitDialog by remember { mutableStateOf(false) }
+    var isDownloadWithCellularEnabled by CELLULAR_DOWNLOAD.booleanState
+
+    val isCustomCommandEnabled by remember {
+        mutableStateOf(PreferenceUtil.getValue(CUSTOM_COMMAND))
     }
 
     val storagePermission =
@@ -119,14 +152,46 @@ fun GeneralDownloadPreferences(
     val isPermissionGranted =
         Build.VERSION.SDK_INT > 29 || storagePermission.status == PermissionStatus.Granted
 
+    val launcher =
+        rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
+            override fun createIntent(context: Context, input: Uri?): Intent {
+                return (super.createIntent(context, input)).apply {
+                    flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                }
+            }
+        }) {
+            it?.let { uri ->
+                App.updateDownloadDir(uri, editingDirectory)
+                val path = FileUtil.getRealPath(uri)
+                audioDirectoryText = path
+            }
+        }
+
+    fun openDirectoryChooser(directory: Directory = Directory.AUDIO) {
+        editingDirectory = directory
+        if (Build.VERSION.SDK_INT > 29 || storagePermission.status == PermissionStatus.Granted)
+            launcher.launch(null)
+        else storagePermission.launchPermissionRequest()
+    }
+
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
         rememberTopAppBarState(),
         canScroll = { true })
-    Scaffold(modifier = Modifier
-        .fillMaxSize()
-        .nestedScroll(scrollBehavior.nestedScrollConnection),
+
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        snackbarHost = {
+            SnackbarHost(
+                modifier = Modifier.systemBarsPadding(),
+                hostState = snackbarHostState
+            )
+        },
         topBar = {
-            com.junkfood.seal.ui.component.LargeTopAppBar(
+            LargeTopAppBar(
                 title = { Text(text = stringResource(id = R.string.general_settings)) },
                 navigationIcon = {
                     BackButton { onNavigateBack() }
@@ -135,11 +200,6 @@ fun GeneralDownloadPreferences(
             )
         },
         content = {
-            val isCustomCommandEnabled by remember {
-                mutableStateOf(
-                    PreferenceUtil.getValue(CUSTOM_COMMAND)
-                )
-            }
             LazyColumn(
                 modifier = Modifier.padding(it)
             ) {
@@ -147,6 +207,12 @@ fun GeneralDownloadPreferences(
                     item {
                         PreferenceInfo(text = stringResource(id = R.string.custom_command_enabled_hint))
                     }
+
+                // ===== GENERAL SECTION =====
+                item {
+                    PreferenceSubtitle(text = stringResource(id = R.string.general_settings))
+                }
+
                 item {
                     var ytdlpVersion by remember {
                         mutableStateOf(
@@ -196,29 +262,68 @@ fun GeneralDownloadPreferences(
                     )
                 }
 
+                // ===== AUDIO DIRECTORY SECTION =====
+                item {
+                    PreferenceSubtitle(text = stringResource(R.string.audio_directory))
+                }
+
+                if (!isCustomCommandEnabled) {
+                    item {
+                        PreferenceItem(
+                            title = stringResource(id = R.string.audio_directory),
+                            description = audioDirectoryText,
+                            icon = Icons.Outlined.LibraryMusic
+                        ) {
+                            openDirectoryChooser(directory = Directory.AUDIO)
+                        }
+                    }
+                }
+
+                // ===== AUDIO FORMAT SECTION =====
+                item {
+                    PreferenceSubtitle(text = stringResource(id = R.string.audio))
+                }
+
+                // Crop artwork toggle removed — artwork will be enforced square by default
+
+                // ===== NETWORK SECTION =====
+                item {
+                    PreferenceSubtitle(text = stringResource(R.string.network))
+                }
+
                 item {
                     PreferenceSwitchWithDivider(
-                        title = stringResource(id = R.string.download_archive),
-                        onClick = {
-                            scope.launch(Dispatchers.IO) {
-                                archiveFileContent = context.getArchiveFile().readText()
-                                withContext(Dispatchers.Main) {
-                                    showClearArchiveDialog = true
-                                }
-                            }
-                        },
-                        icon = Icons.Outlined.Archive,
-                        description = stringResource(R.string.download_archive_desc),
-                        isChecked = useDownloadArchive,
+                        title = stringResource(R.string.rate_limit),
+                        description = maxDownloadRate + " KB/s",
+                        icon = Icons.Outlined.SlowMotionVideo,
+                        isChecked = isRateLimitEnabled,
+                        enabled = !isCustomCommandEnabled,
+                        onClick = { showRateLimitDialog = true },
                         onChecked = {
-                            useDownloadArchive = !useDownloadArchive
-                            DOWNLOAD_ARCHIVE.updateBoolean(useDownloadArchive)
-                        },
-                        enabled = isPermissionGranted
+                            isRateLimitEnabled = !isRateLimitEnabled
+                            RATE_LIMIT.updateBoolean(isRateLimitEnabled)
+                        }
                     )
+                }
+
+                item {
+                    PreferenceSwitch(
+                        title = stringResource(id = R.string.download_with_cellular),
+                        description = stringResource(id = R.string.download_with_cellular_desc),
+                        icon = if (isDownloadWithCellularEnabled) Icons.Outlined.NetworkCell
+                        else Icons.Outlined.NetworkWifi,
+                        isChecked = isDownloadWithCellularEnabled
+                    ) {
+                        isDownloadWithCellularEnabled = !isDownloadWithCellularEnabled
+                        CELLULAR_DOWNLOAD.updateBoolean(
+                            isDownloadWithCellularEnabled
+                        )
+                    }
                 }
             }
         })
+
+    // ===== DIALOGS =====
     if (showYtdlpDialog) {
         var ytdlpUpdateChannel by YT_DLP_UPDATE_CHANNEL.intState
         var ytdlpAutoUpdate by YT_DLP_AUTO_UPDATE.booleanState
@@ -331,16 +436,14 @@ fun GeneralDownloadPreferences(
             },
         )
     }
-    if (showClearArchiveDialog) {
-        DownloadArchiveDialog(
-            archiveFileContent = archiveFileContent,
-            onDismissRequest = { showClearArchiveDialog = false },
-        ) { content ->
-            scope.launch(Dispatchers.IO) {
-                runCatching {
-                    context.getArchiveFile().writeText(content)
-                }
-            }
+
+    if (showRateLimitDialog) {
+        RateLimitDialog(
+            onDismissRequest = { showRateLimitDialog = false },
+            maxDownloadRate = maxDownloadRate
+        ) { rate ->
+            maxDownloadRate = rate
+            MAX_RATE.updateString(rate)
         }
     }
 }
@@ -418,7 +521,6 @@ fun DialogCheckBoxItem(
 }
 
 @Composable
-@Preview
 private fun UpdateProgressIndicator() {
     CircularProgressIndicator(
         modifier = Modifier
@@ -429,47 +531,35 @@ private fun UpdateProgressIndicator() {
 }
 
 @Composable
-fun DownloadArchiveDialog(
-    archiveFileContent: String,
+fun RateLimitDialog(
     onDismissRequest: () -> Unit,
-    onSaveChangesCallback: (String) -> Unit
+    maxDownloadRate: String,
+    onConfirm: (String) -> Unit
 ) {
-    var editContent by remember {
-        mutableStateOf(archiveFileContent)
-    }
+    var rate by remember { mutableStateOf(maxDownloadRate) }
 
     SealDialog(
-        onDismissRequest = onDismissRequest, confirmButton = {
-            ConfirmButton(text = stringResource(id = R.string.save)) {
-                onSaveChangesCallback(editContent)
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            ConfirmButton {
+                onConfirm(rate)
                 onDismissRequest()
             }
-        }, dismissButton = {
+        },
+        dismissButton = {
             DismissButton {
                 onDismissRequest()
             }
         },
-        icon = {
-            Icon(
-                imageVector = Icons.Outlined.Edit,
-                contentDescription = null
-            )
-        },
-        title = { Text(text = stringResource(id = R.string.edit_file)) },
+        icon = { Icon(Icons.Outlined.SlowMotionVideo, null) },
+        title = { Text(text = stringResource(R.string.rate_limit)) },
         text = {
-            Column(
-                modifier = Modifier.padding(horizontal = 24.dp)
-            ) {
-                val textStyle =
-                    MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
-
+            Column(modifier = Modifier.padding(horizontal = 24.dp)) {
                 OutlinedTextField(
-                    label = { Text(text = "archive.txt") },
-                    value = editContent,
-                    onValueChange = { str -> editContent = str },
-                    textStyle = textStyle,
-                    minLines = 10,
-                    maxLines = 10
+                    value = rate,
+                    onValueChange = { rate = it },
+                    label = { Text("KB/s") },
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }

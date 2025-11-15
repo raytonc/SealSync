@@ -72,12 +72,6 @@ import com.junkfood.seal.ui.component.SingleChoiceChip
 import com.junkfood.seal.ui.component.SingleChoiceSegmentedButton
 import com.junkfood.seal.ui.component.VideoFilterChip
 import com.junkfood.seal.ui.page.command.TemplatePickerDialog
-import com.junkfood.seal.ui.page.settings.command.CommandTemplateDialog
-import com.junkfood.seal.ui.page.settings.format.AudioConversionQuickSettingsDialog
-import com.junkfood.seal.ui.page.settings.format.AudioQuickSettingsDialog
-import com.junkfood.seal.ui.page.settings.format.FormatSortingDialog
-import com.junkfood.seal.ui.page.settings.format.VideoFormatDialog
-import com.junkfood.seal.ui.page.settings.format.VideoQualityDialog
 import com.junkfood.seal.ui.page.settings.network.CookiesQuickSettingsDialog
 import com.junkfood.seal.util.AUDIO_CONVERSION_FORMAT
 import com.junkfood.seal.util.AUDIO_CONVERT
@@ -88,7 +82,6 @@ import com.junkfood.seal.util.CUSTOM_COMMAND
 import com.junkfood.seal.util.DOWNLOAD_TYPE_INITIALIZATION
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
-import com.junkfood.seal.util.DownloadUtil.toFormatSorter
 import com.junkfood.seal.util.EXTRACT_AUDIO
 import com.junkfood.seal.util.FORMAT_SELECTION
 import com.junkfood.seal.util.FORMAT_SORTING
@@ -195,12 +188,6 @@ fun DownloadSettingDialog(
             DownloadUtil.getCookiesContentFromDatabase().getOrNull()?.let {
                 FileUtil.writeContentToFile(it, context.getCookiesFile())
             }
-        }
-    }
-
-    LaunchedEffect(showDialog) {
-        if (showDialog) {
-
         }
     }
 
@@ -396,7 +383,7 @@ fun DownloadSettingDialog(
 
             AnimatedVisibility(visible = type == DownloadType.Command) {
 
-
+                // TODO: command settings
             }
 
             DrawerSheetSubtitle(
@@ -584,25 +571,15 @@ fun DownloadSettingDialog(
     }
 
 
-
     if (showAudioSettingsDialog) {
-        AudioQuickSettingsDialog(onDismissRequest = { showAudioSettingsDialog = false })
+        // audio quick settings dialog removed during cleanup; open template picker instead
+        showTemplateSelectionDialog = true
     }
     if (showVideoFormatDialog) {
-        VideoFormatDialog(videoFormatPreference = videoFormatPreference,
-            onDismissRequest = { showVideoFormatDialog = false },
-            onConfirm = {
-                videoFormatPreference = it
-                VIDEO_FORMAT.updateInt(it)
-            })
+        // video format dialog removed during cleanup
     }
     if (showVideoQualityDialog) {
-        VideoQualityDialog(videoQuality = videoQuality,
-            onDismissRequest = { showVideoQualityDialog = false },
-            onConfirm = {
-                VIDEO_QUALITY.updateInt(it)
-                videoQuality = it
-            })
+        // video quality dialog removed during cleanup
     }
 
 
@@ -610,54 +587,26 @@ fun DownloadSettingDialog(
         TemplatePickerDialog { showTemplateSelectionDialog = false }
     }
     if (showTemplateCreatorDialog) {
-        CommandTemplateDialog(
-            onDismissRequest = { showTemplateCreatorDialog = false },
-            confirmationCallback = {
-                scope.launch {
-                    TEMPLATE_ID.updateInt(it)
-                }
-            })
+        // creator dialog removed: show template picker
+        showTemplateSelectionDialog = true
     }
     if (showTemplateEditorDialog) {
-        CommandTemplateDialog(
-            commandTemplate = template,
-            onDismissRequest = { showTemplateEditorDialog = false }
-        )
+        // editor dialog removed: show template picker
+        showTemplateSelectionDialog = true
     }
     if (showCookiesDialog && cookiesProfiles.isNotEmpty()) {
         CookiesQuickSettingsDialog(
             onDismissRequest = { showCookiesDialog = false },
             onConfirm = {},
             cookieProfiles = cookiesProfiles,
-            onCookieProfileClicked = {
-                onNavigateToCookieGeneratorPage(it.url)
+            onCookieProfileClicked = { profile ->
+                onNavigateToCookieGeneratorPage(profile.url)
             },
             isCookiesEnabled = cookies,
-            onCookiesToggled = {
-                cookies = it
+            onCookiesToggled = { value ->
+                cookies = value
                 COOKIES.updateBoolean(cookies)
             }
         )
-    }
-    if (showAudioConversionDialog) {
-        AudioConversionQuickSettingsDialog(onDismissRequest = {
-            showAudioConversionDialog = false
-        })
-    }
-    if (showFormatSortingDialog) {
-        FormatSortingDialog(
-            fields = sortingFields,
-            showSwitch = true,
-            toggleableValue = formatSorting,
-            onSwitchChecked = {
-                formatSorting = it
-                FORMAT_SORTING.updateBoolean(it)
-            }, onImport = {
-                sortingFields = DownloadUtil.DownloadPreferences().toFormatSorter()
-            }, onDismissRequest = { showFormatSortingDialog = false },
-            onConfirm = {
-                sortingFields = it
-                SORTING_FIELDS.updateString(it)
-            })
     }
 }

@@ -41,11 +41,6 @@ class MainActivity : AppCompatActivity() {
             v.setPadding(0, 0, 0, 0)
             insets
         }
-        runBlocking {
-            if (Build.VERSION.SDK_INT < 33) {
-                setLanguage(PreferenceUtil.getLocaleFromPreference())
-            }
-        }
         context = this.baseContext
         setContent {
             val cookiesViewModel: CookiesViewModel = viewModel()

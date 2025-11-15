@@ -1,16 +1,10 @@
 package com.junkfood.seal.database.backup
 
-import android.content.Context
-import android.text.format.DateFormat
-import com.junkfood.seal.App
-import com.junkfood.seal.R
 import com.junkfood.seal.database.objects.CommandTemplate
-import com.junkfood.seal.database.objects.DownloadedVideoInfo
 import com.junkfood.seal.database.objects.OptionShortcut
 import com.junkfood.seal.util.DatabaseUtil
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.util.Date
 
 object BackupUtil {
     private val format = Json {
@@ -35,26 +29,10 @@ object BackupUtil {
         )
     }
 
-    fun List<DownloadedVideoInfo>.toJsonString(): String {
-        return format.encodeToString(Backup(downloadHistory = this))
-    }
-
-    fun List<DownloadedVideoInfo>.toURLListString(): String {
-        return this.map { it.videoUrl }.joinToString(separator = "\n") { it }
-    }
-
     fun String.decodeToBackup(): Result<Backup> {
         return format.runCatching {
             decodeFromString<Backup>(this@decodeToBackup)
         }
-    }
-
-    fun getDownloadHistoryExportFilename(context: Context): String {
-        return listOf(
-            context.getString(R.string.app_name),
-            App.packageInfo.versionName,
-            Date().toString()
-        ).joinToString(separator = "-") { it }
     }
 
     enum class BackupDestination {
@@ -62,6 +40,6 @@ object BackupUtil {
     }
 
     enum class BackupType {
-        DownloadHistory, URLList, CommandTemplate, CommandShortcut
+        CommandTemplate, CommandShortcut
     }
 }

@@ -169,6 +169,10 @@ object NotificationUtil {
     }
 
     fun updateServiceNotificationForPlaylist(index: Int, itemCount: Int) {
+        if (!::serviceNotification.isInitialized) {
+            Log.w(TAG, "updateServiceNotificationForPlaylist: serviceNotification not initialized, skipping update")
+            return
+        }
         serviceNotification = NotificationCompat.Builder(context, serviceNotification)
             .setContentTitle(context.getString(R.string.service_title) + " ($index/$itemCount)")
             .build()

@@ -18,8 +18,6 @@
     <string name="download_start_msg">Download \"%1$s\"</string>
     <string name="fetch_info_error_msg">Could not fetch video info</string>
     <string name="general_settings">General</string>
-    <string name="language">Display language</string>
-    <string name="language_settings">Set display language</string>
     <string name="task_running">An existing download task is already running</string>
     <string name="paste_msg">Paste URL from clipboard</string>
     <string name="paste_fail_msg">Could not match the URL in the clipboard</string>
@@ -58,7 +56,7 @@
     <string name="print_details">Detailed output</string>
     <string name="print_details_desc">Print detailed messages when downloading</string>
     <string name="display">Display</string>
-    <string name="display_settings">Dark theme, dynamic color, languages</string>
+    <string name="display_settings">Dark theme, dynamic color</string>
     <string name="dark_theme">Dark theme</string>
     <string name="follow_system">System</string>
     <string name="on">On</string>
@@ -211,10 +209,6 @@
     <string name="recently_added">Recently Added</string>
     <string name="multiselect_item_count">%1$d video(s), %2$d audio file(s)</string>
     <string name="delete_multiple_items_msg">Remove %1$d item(s) from your download history for good?</string>
-    <string name="sponsorblock" translatable="false">SponsorBlock</string>
-    <string name="sponsorblock_desc">Remove or mark segments in videos with SponsorBlock API</string>
-    <string name="sponsorblock_categories_desc">Specify the SponsorBlock categories to remove or mark in the video file</string>
-    <string name="sponsorblock_categories">SponsorBlock categories</string>
     <string name="check_for_updates">Check for updates</string>
     <string name="check_for_updates_desc">Automatically check for the latest version on GitHub</string>
     <string name="app_up_to_date">The current version is up to date</string>
@@ -294,7 +288,6 @@
     <string name="running_tasks">Running tasks</string>
     <string name="show_logs">Show log</string>
     <string name="logs">Log</string>
-    <string name="subtitle_sponsorblock">Subtitles may be mistimed when removing SponsorBlock segments.</string>
     <string name="embed_subtitles_mkv_msg">To embed soft subtitles, videos will be remuxed into mkv container. You can use VLC Media Player or other compatible apps to watch videos with soft subtitles.</string>
     <string name="filesize_mb">%.2f MB</string>
     <string name="filesize_gb">%.2f GB</string>
@@ -325,11 +318,7 @@
     <string name="clear_all_cookies">Clear all cookies</string>
     <string name="clear_all_cookies_desc">Delete all the cookies stored in the app for good?</string>
     <string name="temporary_directory_desc">Store temporary files in the internal directory</string>
-    <string name="sponsor">Sponsor</string>
-    <string name="sponsor_desc">Support this app by sponsoring on GitHub</string>
-    <string name="sponsor_msg">Seal will be always free and open source for everyone. If you like it, please consider sponsoring me on GitHub!</string>
     <string name="feedback">Feedback</string>
-    <string name="sponsors">Sponsors</string>
     <string name="audio_format">Audio format</string>
     <string name="no_downloaded_media">No downloaded media</string>
     <string name="beta_features">Beta</string>
@@ -345,7 +334,6 @@
     <string name="feature_unavailable">Feature not available</string>
     <string name="no_custom_command_tasks">No custom command tasks</string>
     <string name="msg_from_developer">Message from developer</string>
-    <string name="sponsor_msg2">Thank you very much!</string>
     <string name="download_video_desc">Download videos from the URL</string>
     <string name="convert_subtitle">Convert subtitles</string>
     <string name="convert_subtitle_desc">Convert the subtitles to another format</string>
@@ -455,4 +443,9 @@
         <item quantity="one">%d item</item>
         <item quantity="other">%d items</item>
     </plurals>
+    <string name="sync_folder">Sync folder</string>
+    <string name="pin_shortcut">Pin "Sync" shortcut</string>
+    <string name="pin_shortcut_desc">Add a Sync shortcut to your home screen (may prompt the launcher)</string>
+    <string name="shortcut_sync_short">Sync</string>
+    <string name="shortcut_sync_long">Sync playlists with local folder</string>
 </resources>

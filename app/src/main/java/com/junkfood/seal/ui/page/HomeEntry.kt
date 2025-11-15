@@ -47,12 +47,9 @@ import com.junkfood.seal.ui.page.download.DownloadViewModel
 import com.junkfood.seal.ui.page.settings.SettingsPage
 import com.junkfood.seal.ui.page.settings.about.AboutPage
 import com.junkfood.seal.ui.page.settings.about.CreditsPage
-import com.junkfood.seal.ui.page.settings.directory.DownloadDirectoryPreferences
-import com.junkfood.seal.ui.page.settings.format.DownloadFormatPreferences
 import com.junkfood.seal.ui.page.settings.general.GeneralDownloadPreferences
 import com.junkfood.seal.ui.page.settings.network.CookieProfilePage
 import com.junkfood.seal.ui.page.settings.network.CookiesViewModel
-import com.junkfood.seal.ui.page.settings.network.NetworkPreferences
 import com.junkfood.seal.ui.page.settings.network.WebViewPage
 import com.junkfood.seal.ui.page.videolist.VideoListPage
 import com.junkfood.seal.util.PreferenceUtil
@@ -254,9 +251,6 @@ fun NavGraphBuilder.settingsGraph(
     onNavigateTo: (route: String) -> Unit
 ) {
     navigation(startDestination = Route.SETTINGS_PAGE, route = Route.SETTINGS) {
-        animatedComposable(Route.DOWNLOAD_DIRECTORY) {
-            DownloadDirectoryPreferences(onNavigateBack)
-        }
         animatedComposable(Route.SETTINGS_PAGE) {
             SettingsPage(
                 onNavigateBack = onNavigateBack,
@@ -268,9 +262,6 @@ fun NavGraphBuilder.settingsGraph(
                 onNavigateBack = { onNavigateBack() }
             )
         }
-        animatedComposable(Route.DOWNLOAD_FORMAT) {
-            DownloadFormatPreferences(onNavigateBack = onNavigateBack)
-        }
         animatedComposable(Route.ABOUT) {
             AboutPage(
                 onNavigateBack = onNavigateBack,
@@ -278,14 +269,6 @@ fun NavGraphBuilder.settingsGraph(
             )
         }
         animatedComposable(Route.CREDITS) { CreditsPage(onNavigateBack) }
-        animatedComposable(Route.DOWNLOAD_DIRECTORY) {
-            DownloadDirectoryPreferences { onNavigateBack() }
-        }
-        animatedComposable(Route.NETWORK_PREFERENCES) {
-            NetworkPreferences(navigateToCookieProfilePage = {
-                onNavigateTo(Route.COOKIE_PROFILE)
-            }) { onNavigateBack() }
-        }
         animatedComposable(Route.COOKIE_PROFILE) {
             CookieProfilePage(
                 cookiesViewModel = cookiesViewModel,
@@ -302,4 +285,3 @@ fun NavGraphBuilder.settingsGraph(
         }
     }
 }
-

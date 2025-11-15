@@ -85,6 +85,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.App
 import com.junkfood.seal.Downloader
+import com.junkfood.seal.DownloadTaskItem
 import com.junkfood.seal.R
 import com.junkfood.seal.ui.common.AsyncImageImpl
 import com.junkfood.seal.ui.component.ClearButton
@@ -103,7 +104,7 @@ import com.junkfood.seal.util.toFileSizeText
 @Composable
 fun DownloadPageImplV2(
     downloaderState: Downloader.State,
-    taskState: Downloader.DownloadTaskItem,
+    taskState: DownloadTaskItem,
     viewState: DownloadViewModel.ViewState,
     errorState: Downloader.ErrorState,
     showVideoCard: Boolean = false,
@@ -452,7 +453,7 @@ private fun DownloadPagePreview() {
         Column() {
             DownloadPageImplV2(
                 downloaderState = Downloader.State.DownloadingVideo,
-                taskState = Downloader.DownloadTaskItem(
+                taskState = DownloadTaskItem(
                     title = stringResource(R.string.video_title_sample_text),
                     uploader = stringResource(id = R.string.video_creator_sample_text),
                     progress = 0f,

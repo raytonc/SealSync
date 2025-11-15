@@ -141,6 +141,7 @@ fun SealDialog(
                                 Modifier
                                     .weight(weight = 1f, fill = false)
                                     .padding(TextPadding)
+                                    .padding(DialogHorizontalPadding)
                                     .align(Alignment.Start)
                             ) {
                                 text()
@@ -328,6 +329,7 @@ fun SealDialogVariant(
                                 Modifier
                                     .weight(weight = 1f, fill = false)
                                     .padding(TextPadding)
+                                    .padding(DialogHorizontalPadding)
                                     .align(Alignment.Start)
                             ) {
                                 text()

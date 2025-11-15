@@ -31,12 +31,19 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import com.junkfood.seal.util.PreferenceUtil.getInt
+import com.junkfood.seal.util.PreferenceUtil.getString
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.junkfood.seal.App
@@ -46,13 +53,29 @@ import com.junkfood.seal.ui.common.intState
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.PreferencesHintCard
 import com.junkfood.seal.ui.component.SettingItem
+import com.junkfood.seal.ui.component.PreferenceItem
+import com.junkfood.seal.ui.component.PreferenceSwitchWithDivider
+import com.junkfood.seal.ui.component.PreferenceSwitch
+import com.junkfood.seal.ui.component.PreferenceInfo
 import com.junkfood.seal.ui.component.SettingTitle
 import com.junkfood.seal.ui.component.SmallTopAppBar
 import com.junkfood.seal.util.EXTRACT_AUDIO
+import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
+import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateInt
-import com.junkfood.seal.util.SHOW_SPONSOR_MSG
+import com.junkfood.seal.util.ShortcutUtil
+import com.junkfood.seal.util.CUSTOM_COMMAND
+import com.junkfood.seal.util.RATE_LIMIT
+import com.junkfood.seal.util.MAX_RATE
+import com.junkfood.seal.util.CELLULAR_DOWNLOAD
+import com.junkfood.seal.util.UpdateUtil
+import com.yausername.youtubedl_android.YoutubeDL
+import com.junkfood.seal.util.FileUtil
+import androidx.compose.ui.platform.LocalUriHandler
+import com.junkfood.seal.ui.page.settings.general.Directory
 
+import androidx.compose.ui.platform.LocalUriHandler
 @SuppressLint("BatteryLife")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,10 +119,41 @@ fun SettingsPage(
         }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
-    val showSponsorMessage by SHOW_SPONSOR_MSG.intState
+    val uriHandler = LocalUriHandler.current
 
-    LaunchedEffect(Unit) {
-        SHOW_SPONSOR_MSG.updateInt(showSponsorMessage + 1)
+    // --- replicate a subset of GeneralDownloadPreferences state so we can render general settings inline
+    val scope = rememberCoroutineScope()
+    var showYtdlpDialog by remember { mutableStateOf(false) }
+    var isUpdating by remember { mutableStateOf(false) }
+    var ytdlpVersion = YoutubeDL.getInstance().version(context.applicationContext)
+        ?: context.getString(R.string.ytdlp_update)
+    var isCustomCommandEnabled by remember { mutableStateOf(CUSTOM_COMMAND.getBoolean()) }
+    var audioDirectoryText by remember { mutableStateOf(App.audioDownloadDir) }
+    var editingDirectory by remember { mutableStateOf(Directory.AUDIO) }
+    var isRateLimitEnabled by remember { mutableStateOf(RATE_LIMIT.getBoolean()) }
+    var maxDownloadRate by remember { mutableStateOf(MAX_RATE.getString()) }
+    var showRateLimitDialog by remember { mutableStateOf(false) }
+    var isDownloadWithCellularEnabled by remember { mutableStateOf(CELLULAR_DOWNLOAD.getBoolean()) }
+
+    val dirLauncher = rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
+        override fun createIntent(context: Context, input: Uri?): Intent {
+            return (super.createIntent(context, input)).apply {
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            }
+        }
+    }) { uri: Uri? ->
+        uri?.let {
+            App.updateDownloadDir(it, editingDirectory)
+            val path = FileUtil.getRealPath(it)
+            audioDirectoryText = path
+        }
+    }
+
+    fun openDirectoryChooser(directory: Directory = Directory.AUDIO) {
+        editingDirectory = directory
+        dirLauncher.launch(null)
     }
 
     Scaffold(modifier = Modifier
@@ -137,63 +191,113 @@ fun SettingsPage(
                     }
                 }
             }
-            if (!showBatteryHint && showSponsorMessage > 30)
-                item {
-                    PreferencesHintCard(
-                        title = stringResource(id = R.string.sponsor),
-                        icon = Icons.Rounded.VolunteerActivism,
-                        description = stringResource(id = R.string.sponsor_desc)
+            // Inline general settings (no category subtitles)
+            item {
+                // ytdlp update
+                
+                PreferenceItem(
+                    title = stringResource(id = R.string.ytdlp_update_action),
+                    description = ytdlpVersion,
+                    leadingIcon = {
+                        if (isUpdating) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier
+                                    .padding(start = 8.dp, end = 16.dp)
+                                    .size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            androidx.compose.material3.Icon(
+                                imageVector = Icons.Rounded.SettingsApplications,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .padding(start = 8.dp, end = 16.dp)
+                                    .size(24.dp)
+                            )
+                        }
+                    }, onClick = {
+                        
+                        scope.launch {
+                            isUpdating = true
+                            runCatching {
+                                UpdateUtil.updateYtDlp()
+                            }.onFailure { th -> th.printStackTrace() }
+                            ytdlpVersion = YoutubeDL.getInstance().version(context.applicationContext)
+                                ?: context.getString(R.string.ytdlp_update)
+                            isUpdating = false
+                        }
+                    }
+                )
+            }
+
+            item {
+                // audio directory
+                if (!isCustomCommandEnabled) {
+                    PreferenceItem(
+                        title = stringResource(id = R.string.audio_directory),
+                        description = audioDirectoryText,
+                        icon = Icons.Rounded.Folder
                     ) {
-                        onNavigateTo(Route.DONATE)
+                                        openDirectoryChooser(directory = Directory.AUDIO)
                     }
                 }
+            }
+
             item {
-                SettingItem(
-                    title = stringResource(id = R.string.general_settings),
-                    description = stringResource(
-                        id = R.string.general_settings_desc
-                    ),
+                // rate limit
+                PreferenceSwitchWithDivider(
+                    title = stringResource(R.string.rate_limit),
+                    description = maxDownloadRate + " KB/s",
+                    icon = Icons.Rounded.VideoFile,
+                    isChecked = isRateLimitEnabled,
+                    enabled = !isCustomCommandEnabled,
+                    onClick = { showRateLimitDialog = true },
+                    onChecked = {
+                        isRateLimitEnabled = !isRateLimitEnabled
+                        RATE_LIMIT.updateBoolean(isRateLimitEnabled)
+                    }
+                )
+            }
+
+            item {
+                PreferenceSwitch(
+                    title = stringResource(id = R.string.download_with_cellular),
+                    description = stringResource(id = R.string.download_with_cellular_desc),
+                    icon = if (isDownloadWithCellularEnabled) Icons.Rounded.SignalCellular4Bar
+                    else Icons.Rounded.SignalWifi4Bar,
+                    isChecked = isDownloadWithCellularEnabled
+                ) {
+                    isDownloadWithCellularEnabled = !isDownloadWithCellularEnabled
+                    CELLULAR_DOWNLOAD.updateBoolean(isDownloadWithCellularEnabled)
+                }
+            }
+
+            // About links (readme + credits)
+            item {
+                PreferenceItem(
+                    title = stringResource(R.string.readme),
+                    description = stringResource(R.string.readme_desc),
+                    icon = Icons.Rounded.Info
+                ) {
+                    uriHandler.openUri("https://github.com/raytonc/SealSync")
+                }
+            }
+
+            item {
+                PreferenceItem(
+                    title = stringResource(id = R.string.credits),
+                    description = stringResource(id = R.string.credits_desc),
+                    icon = Icons.Rounded.VolunteerActivism
+                ) { onNavigateTo(Route.CREDITS) }
+            }
+
+            item {
+                PreferenceItem(
+                    title = stringResource(id = R.string.pin_shortcut),
+                    description = stringResource(id = R.string.pin_shortcut_desc),
                     icon = Icons.Rounded.SettingsApplications
                 ) {
-                    onNavigateTo(Route.GENERAL_DOWNLOAD_PREFERENCES)
-                }
-            }
-            item {
-                SettingItem(
-                    title = stringResource(id = R.string.download_directory),
-                    description = stringResource(
-                        id = R.string.download_directory_desc
-                    ),
-                    icon = Icons.Rounded.Folder
-                ) {
-                    onNavigateTo(Route.DOWNLOAD_DIRECTORY)
-                }
-            }
-            item {
-                SettingItem(
-                    title = stringResource(id = R.string.format),
-                    description = stringResource(id = R.string.format_settings_desc),
-                    icon = if (EXTRACT_AUDIO.getBoolean()) Icons.Rounded.AudioFile else Icons.Rounded.VideoFile
-                ) {
-                    onNavigateTo(Route.DOWNLOAD_FORMAT)
-                }
-            }
-            item {
-                SettingItem(
-                    title = stringResource(id = R.string.network),
-                    description = stringResource(id = R.string.network_settings_desc),
-                    icon = if (App.connectivityManager.isActiveNetworkMetered) Icons.Rounded.SignalCellular4Bar else Icons.Rounded.SignalWifi4Bar
-                ) {
-                    onNavigateTo(Route.NETWORK_PREFERENCES)
-                }
-            }
-            item {
-                SettingItem(
-                    title = stringResource(id = R.string.about), description = stringResource(
-                        id = R.string.about_page
-                    ), icon = Icons.Rounded.Info
-                ) {
-                    onNavigateTo(Route.ABOUT)
+                    ShortcutUtil.requestPinSyncShortcut(context)
                 }
             }
         }

@@ -75,7 +75,6 @@ import com.junkfood.seal.ui.component.PasteFromClipBoardButton
 import com.junkfood.seal.ui.component.SealDialog
 import com.junkfood.seal.ui.component.SealModalBottomSheetM2
 import com.junkfood.seal.ui.component.TaskStatus
-import com.junkfood.seal.ui.page.settings.command.CommandTemplateDialog
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.updateInt
 import com.junkfood.seal.util.TEMPLATE_ID
@@ -171,14 +170,8 @@ fun TaskListPage(onNavigateBack: () -> Unit, onNavigateToDetail: (Int) -> Unit) 
             val clipboardManager = LocalClipboardManager.current
 
             var showTemplateSelectionDialog by remember { mutableStateOf(false) }
-            var showTemplateCreatorDialog by remember { mutableStateOf(false) }
-            var showTemplateEditorDialog by remember { mutableStateOf(false) }
 
-            val template by remember(
-                showTemplateCreatorDialog, showTemplateSelectionDialog, showTemplateEditorDialog
-            ) {
-                mutableStateOf(PreferenceUtil.getTemplate())
-            }
+            val template by remember(showTemplateSelectionDialog) { mutableStateOf(PreferenceUtil.getTemplate()) }
 
             var url by remember { mutableStateOf("") }
 
@@ -197,8 +190,8 @@ fun TaskListPage(onNavigateBack: () -> Unit, onNavigateToDetail: (Int) -> Unit) 
                     },
                     template = template,
                     onTemplateSelectionClicked = { showTemplateSelectionDialog = true },
-                    onNewTemplateClicked = { showTemplateCreatorDialog = true },
-                    onEditClicked = { showTemplateEditorDialog = true })
+                    onNewTemplateClicked = { showTemplateSelectionDialog = true },
+                    onEditClicked = { showTemplateSelectionDialog = true })
                 LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -227,19 +220,7 @@ fun TaskListPage(onNavigateBack: () -> Unit, onNavigateToDetail: (Int) -> Unit) 
                 }
             }
             if (showTemplateSelectionDialog) {
-                TemplatePickerDialog() { showTemplateSelectionDialog = false }
-            }
-            if (showTemplateCreatorDialog) {
-                CommandTemplateDialog(onDismissRequest = { showTemplateCreatorDialog = false },
-                    confirmationCallback = {
-                        scope.launch {
-                            TEMPLATE_ID.updateInt(it)
-                        }
-                    })
-            }
-            if (showTemplateEditorDialog) {
-                CommandTemplateDialog(commandTemplate = template,
-                    onDismissRequest = { showTemplateEditorDialog = false })
+                TemplatePickerDialog(onDismissRequest = { showTemplateSelectionDialog = false })
             }
         })
 

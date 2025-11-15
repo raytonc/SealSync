@@ -17,10 +17,9 @@ import com.junkfood.seal.Downloader.onProcessStarted
 import com.junkfood.seal.Downloader.onTaskEnded
 import com.junkfood.seal.Downloader.onTaskError
 import com.junkfood.seal.Downloader.onTaskStarted
-import com.junkfood.seal.Downloader.toNotificationId
+import com.junkfood.seal.toNotificationId
 import com.junkfood.seal.R
 import com.junkfood.seal.database.objects.CommandTemplate
-import com.junkfood.seal.database.objects.DownloadedVideoInfo
 import com.junkfood.seal.ui.page.settings.network.Cookie
 import com.junkfood.seal.util.FileUtil.getArchiveFile
 import com.junkfood.seal.util.FileUtil.getConfigFile
@@ -94,7 +93,6 @@ object DownloadUtil {
         ToastUtil.makeToastSuspend(context.getString(R.string.fetching_playlist_info))
         val request = YoutubeDLRequest(playlistURL)
         with(request) {
-//            addOption("--compat-options", "no-youtube-unavailable-videos")
             addOption("--flat-playlist")
             addOption("--dump-single-json")
             addOption("-o", BASENAME)
@@ -159,9 +157,6 @@ object DownloadUtil {
                 if (forceIpv4) {
                     addOption("-4")
                 }
-                /*            if (debug) {
-                                addOption("-v")
-                            }*/
                 if (autoSubtitle) {
                     addOption("--write-auto-subs")
                     if (!autoTranslatedSubtitles) {
@@ -183,7 +178,7 @@ object DownloadUtil {
     }
 
     data class DownloadPreferences(
-        val extractAudio: Boolean = PreferenceUtil.getValue(EXTRACT_AUDIO),
+        val extractAudio: Boolean = true, // Always extract audio
         val createThumbnail: Boolean = PreferenceUtil.getValue(THUMBNAIL),
         val downloadPlaylist: Boolean = PreferenceUtil.getValue(PLAYLIST),
         val subdirectoryExtractor: Boolean = PreferenceUtil.getValue(SUBDIRECTORY_EXTRACTOR),
@@ -197,16 +192,14 @@ object DownloadUtil {
         val autoTranslatedSubtitles: Boolean = AUTO_TRANSLATED_SUBTITLES.getBoolean(),
         val convertSubtitle: Int = CONVERT_SUBTITLE.getInt(),
         val concurrentFragments: Int = CONCURRENT.getInt(),
-        val sponsorBlock: Boolean = PreferenceUtil.getValue(SPONSORBLOCK),
-        val sponsorBlockCategory: String = PreferenceUtil.getSponsorBlockCategories(),
         val cookies: Boolean = COOKIES.getBoolean(),
         val aria2c: Boolean = PreferenceUtil.getValue(ARIA2C),
         val audioFormat: Int = AUDIO_FORMAT.getInt(),
-        val audioQuality: Int = AUDIO_QUALITY.getInt(),
-        val convertAudio: Boolean = AUDIO_CONVERT.getBoolean(),
+        val audioQuality: Int = NOT_SPECIFIED, // Always unlimited quality
+        val convertAudio: Boolean = true, // Always convert audio
         val formatSorting: Boolean = FORMAT_SORTING.getBoolean(),
         val sortingFields: String = SORTING_FIELDS.getString(),
-        val audioConvertFormat: Int = PreferenceUtil.getAudioConvertFormat(),
+        val audioConvertFormat: Int = CONVERT_M4A, // Default convert to M4A (changed from WAV)
         val videoFormat: Int = PreferenceUtil.getVideoFormat(),
         val formatIdString: String = "",
         val videoResolution: Int = PreferenceUtil.getVideoResolution(),
@@ -214,7 +207,7 @@ object DownloadUtil {
         val rateLimit: Boolean = PreferenceUtil.getValue(RATE_LIMIT),
         val maxDownloadRate: String = PreferenceUtil.getMaxDownloadRate(),
         val privateDirectory: Boolean = PreferenceUtil.getValue(PRIVATE_DIRECTORY),
-        val cropArtwork: Boolean = PreferenceUtil.getValue(CROP_ARTWORK),
+        val cropArtwork: Boolean = true,
         val sdcard: Boolean = PreferenceUtil.getValue(SDCARD_DOWNLOAD),
         val sdcardUri: String = SDCARD_URI.getString(),
         val embedThumbnail: Boolean = EMBED_THUMBNAIL.getBoolean(),
@@ -229,7 +222,7 @@ object DownloadUtil {
         },
         val outputTemplate: String = OUTPUT_TEMPLATE.getString(),
         val useDownloadArchive: Boolean = DOWNLOAD_ARCHIVE.getBoolean(),
-        val embedMetadata: Boolean = EMBED_METADATA.getBoolean(),
+        val embedMetadata: Boolean = true, // Always embed metadata
         val restrictFilenames: Boolean = RESTRICT_FILENAMES.getBoolean(),
         val supportAv1HardwareDecoding: Boolean = checkIfAv1HardwareAccelerated(),
         val forceIpv4: Boolean = FORCE_IPV4.getBoolean(),
@@ -453,6 +446,10 @@ object DownloadUtil {
                     CONVERT_M4A -> {
                         addOption("--audio-format", "m4a")
                     }
+
+                    CONVERT_WAV -> {
+                        addOption("--audio-format", "wav")
+                    }
                 }
             } else {
                 applyFormatSorter(preferences, toAudioFormatSorter())
@@ -484,33 +481,6 @@ object DownloadUtil {
 
     }
 
-    private fun insertInfoIntoDownloadHistory(
-        videoInfo: VideoInfo, filePaths: List<String>
-    ): List<String> = filePaths.onEach {
-        DatabaseUtil.insertInfo(videoInfo.toDownloadedVideoInfo(videoPath = it))
-    }
-
-    private fun VideoInfo.toDownloadedVideoInfo(
-        id: Int = 0, videoPath: String
-    ): DownloadedVideoInfo = this.run {
-        DownloadedVideoInfo(
-            id = id,
-            videoTitle = title,
-            videoAuthor = uploader ?: channel ?: uploaderId.toString(),
-            videoUrl = webpageUrl ?: originalUrl.toString(),
-            thumbnailUrl = thumbnail.toHttpsUrl(),
-            videoPath = videoPath,
-            extractor = extractorKey
-        )
-    }
-
-    private fun insertSplitChapterIntoHistory(videoInfo: VideoInfo, filePaths: List<String>) =
-        filePaths.onEach {
-            DatabaseUtil.insertInfo(
-                videoInfo.toDownloadedVideoInfo(videoPath = it).copy(videoTitle = it.getFileName())
-            )
-        }
-
     @CheckResult
     fun downloadVideo(
         videoInfo: VideoInfo? = null,
@@ -536,7 +506,6 @@ object DownloadUtil {
 
             request.apply {
                 addOption("--no-mtime")
-//                addOption("-v")
                 if (cookies) {
                     enableCookies(userAgentString)
                 }
@@ -571,7 +540,6 @@ object DownloadUtil {
                     if (subdirectoryPlaylistTitle && !videoInfo.playlist.isNullOrEmpty()) {
                         outputBuilder.append(PLAYLIST_TITLE_SUBDIRECTORY_PREFIX)
                     }
-//                    addOption("--compat-options", "no-youtube-unavailable-videos")
                 } else {
                     addOption("--no-playlist")
                 }
@@ -594,9 +562,6 @@ object DownloadUtil {
                     if (privateDirectory) pathBuilder.append(App.privateDownloadDir)
                     else pathBuilder.append(videoDownloadDir)
                     addOptionsForVideoDownloads(downloadPreferences)
-                }
-                if (sponsorBlock) {
-                    addOption("--sponsorblock-remove", sponsorBlockCategory)
                 }
 
                 if (createThumbnail) {
@@ -685,10 +650,6 @@ object DownloadUtil {
             ).onSuccess {
                 if (privateMode) {
                     return Result.success(emptyList())
-                } else if (splitByChapter) {
-                    insertSplitChapterIntoHistory(videoInfo, it)
-                } else {
-                    insertInfoIntoDownloadHistory(videoInfo, it)
                 }
             }
         } else {
@@ -696,13 +657,7 @@ object DownloadUtil {
                 title = fileName, downloadDir = downloadPath
             ).run {
                 if (privateMode) Result.success(emptyList())
-                else Result.success(
-                    if (splitByChapter) {
-                        insertSplitChapterIntoHistory(videoInfo, this)
-                    } else {
-                        insertInfoIntoDownloadHistory(videoInfo, this)
-                    }
-                )
+                else Result.success(this)
             }
         }
     }
