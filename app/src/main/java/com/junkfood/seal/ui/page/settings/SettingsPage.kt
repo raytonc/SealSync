@@ -70,6 +70,7 @@ import com.junkfood.seal.util.RATE_LIMIT
 import com.junkfood.seal.util.MAX_RATE
 import com.junkfood.seal.util.CELLULAR_DOWNLOAD
 import com.junkfood.seal.util.UpdateUtil
+import com.junkfood.seal.util.ToastUtil
 import com.yausername.youtubedl_android.YoutubeDL
 import com.junkfood.seal.util.FileUtil
 import androidx.compose.ui.platform.LocalUriHandler
@@ -216,14 +217,27 @@ fun SettingsPage(
                             )
                         }
                     }, onClick = {
-                        
                         scope.launch {
-                            isUpdating = true
                             runCatching {
-                                UpdateUtil.updateYtDlp()
-                            }.onFailure { th -> th.printStackTrace() }
-                            ytdlpVersion = YoutubeDL.getInstance().version(context.applicationContext)
-                                ?: context.getString(R.string.ytdlp_update)
+                                isUpdating = true
+                                val status = UpdateUtil.updateYtDlp()
+                                ytdlpVersion = YoutubeDL.getInstance().version(context.applicationContext)
+                                    ?: context.getString(R.string.ytdlp_update)
+                                status
+                            }.onFailure { th ->
+                                th.printStackTrace()
+                                ToastUtil.makeToastSuspend(context.getString(R.string.yt_dlp_update_fail))
+                            }.onSuccess { status ->
+                                val message = when (status) {
+                                    YoutubeDL.UpdateStatus.DONE ->
+                                        context.getString(R.string.yt_dlp_up_to_date) + " (${ytdlpVersion})"
+                                    YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE ->
+                                        context.getString(R.string.yt_dlp_up_to_date) + " (${ytdlpVersion})"
+                                    else ->
+                                        context.getString(R.string.yt_dlp_up_to_date) + " (${ytdlpVersion})"
+                                }
+                                ToastUtil.makeToastSuspend(message)
+                            }
                             isUpdating = false
                         }
                     }
@@ -272,7 +286,23 @@ fun SettingsPage(
                 }
             }
 
-            // About links (readme + credits)
+            item {
+                PreferenceItem(
+                    title = stringResource(id = R.string.pin_shortcut),
+                    description = stringResource(id = R.string.pin_shortcut_desc),
+                    icon = Icons.Rounded.SettingsApplications
+                ) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        ShortcutUtil.requestPinSyncShortcut(context)
+                    }
+                }
+            }
+
+            // About section
+            item {
+                SettingTitle(text = stringResource(id = R.string.about))
+            }
+
             item {
                 PreferenceItem(
                     title = stringResource(R.string.readme),
@@ -289,18 +319,6 @@ fun SettingsPage(
                     description = stringResource(id = R.string.credits_desc),
                     icon = Icons.Rounded.VolunteerActivism
                 ) { onNavigateTo(Route.CREDITS) }
-            }
-
-            item {
-                PreferenceItem(
-                    title = stringResource(id = R.string.pin_shortcut),
-                    description = stringResource(id = R.string.pin_shortcut_desc),
-                    icon = Icons.Rounded.SettingsApplications
-                ) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        ShortcutUtil.requestPinSyncShortcut(context)
-                    }
-                }
             }
         }
     }

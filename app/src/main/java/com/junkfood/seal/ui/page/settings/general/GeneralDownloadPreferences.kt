@@ -240,13 +240,22 @@ fun GeneralDownloadPreferences(
                             scope.launch {
                                 runCatching {
                                     isUpdating = true
-                                    UpdateUtil.updateYtDlp()
+                                    val status = UpdateUtil.updateYtDlp()
                                     ytdlpVersion = YT_DLP_VERSION.getString()
+                                    status
                                 }.onFailure { th ->
                                     th.printStackTrace()
                                     ToastUtil.makeToastSuspend(App.context.getString(R.string.yt_dlp_update_fail))
-                                }.onSuccess {
-                                    ToastUtil.makeToastSuspend(context.getString(R.string.yt_dlp_up_to_date) + " (${YT_DLP_VERSION.getString()})")
+                                }.onSuccess { status ->
+                                    val message = when (status) {
+                                        YoutubeDL.UpdateStatus.DONE ->
+                                            context.getString(R.string.yt_dlp_up_to_date) + " (${YT_DLP_VERSION.getString()})"
+                                        YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE ->
+                                            context.getString(R.string.yt_dlp_up_to_date) + " (${YT_DLP_VERSION.getString()})"
+                                        else ->
+                                            context.getString(R.string.yt_dlp_up_to_date) + " (${YT_DLP_VERSION.getString()})"
+                                    }
+                                    ToastUtil.makeToastSuspend(message)
                                 }
                                 isUpdating = false
                             }
