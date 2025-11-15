@@ -297,7 +297,9 @@ fun SettingsPage(
                     description = stringResource(id = R.string.pin_shortcut_desc),
                     icon = Icons.Rounded.SettingsApplications
                 ) {
-                    ShortcutUtil.requestPinSyncShortcut(context)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        ShortcutUtil.requestPinSyncShortcut(context)
+                    }
                 }
             }
         }

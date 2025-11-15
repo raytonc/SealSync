@@ -113,6 +113,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+const val ytdlpReference = "https://github.com/yt-dlp/yt-dlp#readme"
+
 enum class Directory {
     AUDIO
 }

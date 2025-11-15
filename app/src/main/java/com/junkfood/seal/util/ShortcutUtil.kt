@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
+import android.os.Build
+import androidx.annotation.RequiresApi
 import com.junkfood.seal.R
 import com.junkfood.seal.ui.shortcut.SyncShortcutActivity
 
@@ -14,7 +16,10 @@ object ShortcutUtil {
      * Request the launcher to pin a "Sync" shortcut on the home screen (API 26+).
      * This uses the platform ShortcutManager.requestPinShortcut API.
      */
+    @RequiresApi(Build.VERSION_CODES.O)
     fun requestPinSyncShortcut(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
         val shortcutManager = context.getSystemService(ShortcutManager::class.java)
         if (shortcutManager == null || !shortcutManager.isRequestPinShortcutSupported) return
 

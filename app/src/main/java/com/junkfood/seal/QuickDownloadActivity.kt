@@ -30,7 +30,6 @@ import com.junkfood.seal.util.CUSTOM_COMMAND
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.matchUrlFromSharedText
-import com.junkfood.seal.util.setLanguage
 import kotlinx.coroutines.runBlocking
 
 private const val TAG = "ShareActivity"

@@ -613,15 +613,7 @@ object DownloadUtil {
                     request = this, processId = taskId, callback = progressCallback
                 )
             }.onFailure { th ->
-                return if (sponsorBlock && th.message?.contains("Unable to communicate with SponsorBlock API") == true) {
-                    th.printStackTrace()
-                    onFinishDownloading(
-                        preferences = this,
-                        videoInfo = videoInfo,
-                        downloadPath = pathBuilder.toString(),
-                        sdcardUri = sdcardUri
-                    )
-                } else Result.failure(th)
+                return Result.failure(th)
             }
             return onFinishDownloading(
                 preferences = this,
