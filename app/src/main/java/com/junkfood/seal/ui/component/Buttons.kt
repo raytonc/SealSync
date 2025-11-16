@@ -193,7 +193,7 @@ fun LongTapTextButton(
     onLongClickLabel: String,
     modifier: Modifier = Modifier,
     shape: Shape = ButtonDefaults.shape,
-    border: BorderStroke? = null,
+    @Suppress("UNUSED_PARAMETER") border: BorderStroke? = null,
     contentPadding: PaddingValues = ButtonDefaults.ButtonWithIconContentPadding,
     content: @Composable RowScope.() -> Unit
 ) {

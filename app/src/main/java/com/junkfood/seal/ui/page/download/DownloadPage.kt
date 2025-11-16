@@ -4,10 +4,6 @@ import android.Manifest
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -40,7 +36,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,7 +63,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -84,7 +78,6 @@ import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.component.NavigationBarSpacer
-import com.junkfood.seal.util.CELLULAR_DOWNLOAD
 import com.junkfood.seal.util.NOTIFICATION
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
@@ -96,7 +89,7 @@ import com.junkfood.seal.util.ToastUtil
 fun DownloadPage(
     navigateToSettings: () -> Unit = {},
     navigateToDownloads: () -> Unit = {},
-    downloadViewModel: DownloadViewModel = hiltViewModel(),
+    @Suppress("UNUSED_PARAMETER") downloadViewModel: DownloadViewModel = hiltViewModel(),
     playlistViewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val view = LocalView.current
@@ -181,7 +174,6 @@ fun DownloadPage(
             },
             onAllowAlwaysConfirm = {
                 Downloader.syncPlaylists(playlists)
-                CELLULAR_DOWNLOAD.updateBoolean(true)
                 showMeteredNetworkDialog = false
             }
         )
@@ -276,14 +268,6 @@ fun DownloadPage(
                 .background(MaterialTheme.colorScheme.background)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                TitleWithProgressIndicator(
-                    showProgressIndicator = downloaderState is Downloader.State.FetchingInfo,
-                    isDownloadingPlaylist = downloaderState is Downloader.State.DownloadingPlaylist,
-                    showDownloadText = downloaderState is Downloader.State.DownloadingPlaylist || downloaderState is Downloader.State.DownloadingVideo,
-                    currentIndex = downloaderState.run { if (this is Downloader.State.DownloadingPlaylist) currentItem else 0 },
-                    downloadItemCount = downloaderState.run { if (this is Downloader.State.DownloadingPlaylist) itemCount else 0 }
-                )
-
                 Column(Modifier.padding(horizontal = 24.dp)) {
                     AnimatedVisibility(visible = errorState != Downloader.ErrorState.None) {
                         ErrorMessage(

@@ -45,7 +45,7 @@ private tailrec fun Context.findWindow(): Window? =
 fun SealTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     isHighContrastModeEnabled: Boolean = false,
-    isDynamicColorEnabled: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") isDynamicColorEnabled: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme =

@@ -90,7 +90,7 @@ fun CreditsPage(onNavigateBack: () -> Unit) {
         Credit("OkHttp", APACHE_V2, okhttp),
         Credit("Android SVG", APACHE_V2, androidSvg),
         Credit("material-motion-compose", APACHE_V2, materialMotionCompose),
-        Credit("unDraw", null, unDraw),
+        Credit("unDraw", url = unDraw),
         Credit("App icon by Icons8", "Universal Multimedia Licensing Agreement for Icons8", icons8)
     )
     val uriHandler = LocalUriHandler.current

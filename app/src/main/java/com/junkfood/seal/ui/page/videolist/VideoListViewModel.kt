@@ -45,10 +45,7 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
                         file = file,
                         name = file.name,
                         size = file.length(),
-                        lastModified = file.lastModified(),
-                        thumbnailUrl = null,
-                        videoTitle = null,
-                        videoAuthor = null
+                        lastModified = file.lastModified()
                     )
                 } ?: emptyList()
             } else {

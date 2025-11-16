@@ -17,15 +17,13 @@ import com.junkfood.seal.Downloader.onProcessStarted
 import com.junkfood.seal.Downloader.onTaskEnded
 import com.junkfood.seal.Downloader.onTaskError
 import com.junkfood.seal.Downloader.onTaskStarted
-import com.junkfood.seal.toNotificationId
 import com.junkfood.seal.R
 import com.junkfood.seal.database.objects.CommandTemplate
-import com.junkfood.seal.ui.page.settings.network.Cookie
+import com.junkfood.seal.toNotificationId
 import com.junkfood.seal.util.FileUtil.getArchiveFile
 import com.junkfood.seal.util.FileUtil.getConfigFile
 import com.junkfood.seal.util.FileUtil.getCookiesFile
 import com.junkfood.seal.util.FileUtil.getExternalTempDir
-import com.junkfood.seal.util.FileUtil.getFileName
 import com.junkfood.seal.util.FileUtil.getSdcardTempDir
 import com.junkfood.seal.util.FileUtil.moveFilesToSdcard
 import com.junkfood.seal.util.PreferenceUtil.COOKIE_HEADER
@@ -204,8 +202,6 @@ object DownloadUtil {
         val formatIdString: String = "",
         val videoResolution: Int = PreferenceUtil.getVideoResolution(),
         val privateMode: Boolean = PreferenceUtil.getValue(PRIVATE_MODE),
-        val rateLimit: Boolean = PreferenceUtil.getValue(RATE_LIMIT),
-        val maxDownloadRate: String = PreferenceUtil.getMaxDownloadRate(),
         val privateDirectory: Boolean = PreferenceUtil.getValue(PRIVATE_DIRECTORY),
         val cropArtwork: Boolean = true,
         val sdcard: Boolean = PreferenceUtil.getValue(SDCARD_DOWNLOAD),
@@ -529,10 +525,6 @@ object DownloadUtil {
                     } else {
                         useDownloadArchive()
                     }
-                }
-
-                if (rateLimit && maxDownloadRate.isNumberInRange(1, 1000000)) {
-                    addOption("-r", "${maxDownloadRate}K")
                 }
 
                 if (playlistItem != 0 && downloadPlaylist) {

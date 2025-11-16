@@ -7,26 +7,15 @@ import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
-import android.text.format.DateFormat
 import android.util.Log
 import android.webkit.MimeTypeMap
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.CheckResult
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
-import com.junkfood.seal.App
 import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.R
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import okhttp3.internal.closeQuietly
 import java.io.File
-import java.nio.charset.Charset
-import java.util.Date
 
 const val AUDIO_REGEX = "(mp3|aac|opus|m4a|wav)$"
 const val THUMBNAIL_REGEX = "\\.(jpg|png)$"
@@ -244,7 +233,6 @@ object FileUtil {
         val last: String = path.split("primary:").last()
         return Environment.getExternalStorageDirectory().absolutePath + "/$last"
     }
-
 
 
     private const val TAG = "FileUtil"

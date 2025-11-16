@@ -94,12 +94,13 @@ class App : Application() {
 
     private fun startCrashReportActivity(th: Throwable) {
         th.printStackTrace()
-        startActivity(Intent(
-            this, CrashReportActivity::class.java
-        ).setAction("$packageName.error_report").apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            putExtra("error_report", getVersionReport() + "\n" + th.stackTraceToString())
-        })
+        startActivity(
+            Intent(
+                this, CrashReportActivity::class.java
+            ).setAction("$packageName.error_report").apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra("error_report", getVersionReport() + "\n" + th.stackTraceToString())
+            })
     }
 
     companion object {
@@ -127,7 +128,7 @@ class App : Application() {
         fun startService() {
             if (isServiceRunning) return
             Intent(context.applicationContext, DownloadService::class.java).also { intent ->
-                context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+                context.bindService(intent, connection, BIND_AUTO_CREATE)
             }
         }
 

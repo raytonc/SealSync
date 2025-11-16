@@ -178,7 +178,7 @@ fun SealDialogButtonVariant(
     text: String,
     onClick: () -> Unit
 ) {
-    Box() {
+    Box {
         Surface(
             modifier = modifier
                 .clickable(onClick = onClick)

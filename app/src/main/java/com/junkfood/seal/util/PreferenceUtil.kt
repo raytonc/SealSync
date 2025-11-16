@@ -1,6 +1,5 @@
 package com.junkfood.seal.util
 
-import android.os.Build
 import androidx.annotation.DeprecatedSinceApi
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
@@ -26,7 +25,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import java.util.Locale
 
 
 const val CUSTOM_COMMAND = "custom_command"
@@ -86,7 +84,6 @@ const val DISABLE_PREVIEW = "disable_preview"
 const val PRIVATE_DIRECTORY = "private_directory"
 const val CROP_ARTWORK = "crop_artwork"
 const val EMBED_THUMBNAIL = "embed_thumbnail"
-const val FORMAT_SELECTION = "format_selection"
 const val VIDEO_CLIP = "video_clip"
 const val PROXY = "proxy"
 const val PROXY_URL = "proxy_url"
@@ -182,7 +179,6 @@ private val StringPreferenceDefaults = mapOf(
 )
 
 private val BooleanPreferenceDefaults = mapOf(
-    FORMAT_SELECTION to true,
     CONFIGURE to true,
     CELLULAR_DOWNLOAD to false,
     YT_DLP_AUTO_UPDATE to true,
@@ -423,8 +419,8 @@ object PreferenceStrings {
 
     fun getAudioConvertDesc(audioFormatCode: Int = PreferenceUtil.getAudioConvertFormat()): String {
         return when (audioFormatCode) {
-            0 -> App.Companion.context.getString(R.string.convert_to).format("mp3")
-            else -> App.Companion.context.getString(R.string.convert_to).format("m4a")
+            0 -> context.getString(R.string.convert_to).format("mp3")
+            else -> context.getString(R.string.convert_to).format("m4a")
         }
     }
 
@@ -467,7 +463,7 @@ object PreferenceStrings {
             4 -> "720p"
             5 -> "480p"
             6 -> "360p"
-            7 -> App.Companion.context.getString(R.string.lowest_quality)
+            7 -> context.getString(R.string.lowest_quality)
             else -> context.getString(R.string.best_quality)
         }
     }

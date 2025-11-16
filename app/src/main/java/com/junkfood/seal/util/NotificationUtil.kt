@@ -170,7 +170,10 @@ object NotificationUtil {
 
     fun updateServiceNotificationForPlaylist(index: Int, itemCount: Int) {
         if (!::serviceNotification.isInitialized) {
-            Log.w(TAG, "updateServiceNotificationForPlaylist: serviceNotification not initialized, skipping update")
+            Log.w(
+                TAG,
+                "updateServiceNotificationForPlaylist: serviceNotification not initialized, skipping update"
+            )
             return
         }
         serviceNotification = NotificationCompat.Builder(context, serviceNotification)

@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.Dp
  * @param slideDistance Value to the slide distance dimension, 30dp by default.
  */
 @Composable
-public fun rememberSlideDistance(
+fun rememberSlideDistance(
     slideDistance: Dp = MotionConstants.DefaultSlideDistance,
 ): Int {
     val density = LocalDensity.current
@@ -65,7 +65,7 @@ private val Int.ForIncoming: Int
  * [materialSharedAxisX] allows to switch a layout with shared X-axis transition.
  *
  */
-public fun materialSharedAxisX(
+fun materialSharedAxisX(
     initialOffsetX: (fullWidth: Int) -> Int,
     targetOffsetX: (fullWidth: Int) -> Int,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
@@ -80,7 +80,7 @@ public fun materialSharedAxisX(
 /**
  * [materialSharedAxisXIn] allows to switch a layout with shared X-axis enter transition.
  */
-public fun materialSharedAxisXIn(
+fun materialSharedAxisXIn(
     initialOffsetX: (fullWidth: Int) -> Int,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
 ): EnterTransition = slideInHorizontally(
@@ -101,7 +101,7 @@ public fun materialSharedAxisXIn(
  * [materialSharedAxisXOut] allows to switch a layout with shared X-axis exit transition.
  *
  */
-public fun materialSharedAxisXOut(
+fun materialSharedAxisXOut(
     targetOffsetX: (fullWidth: Int) -> Int,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
 ): ExitTransition = slideOutHorizontally(
@@ -122,7 +122,7 @@ public fun materialSharedAxisXOut(
  * [materialSharedAxisY] allows to switch a layout with shared Y-axis transition.
  *
  */
-public fun materialSharedAxisY(
+fun materialSharedAxisY(
     initialOffsetX: (fullWidth: Int) -> Int,
     targetOffsetY: (fullWidth: Int) -> Int,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
@@ -138,7 +138,7 @@ public fun materialSharedAxisY(
  * [materialSharedAxisYIn] allows to switch a layout with shared Y-axis enter transition.
  *
  */
-public fun materialSharedAxisYIn(
+fun materialSharedAxisYIn(
     initialOffsetX: (fullWidth: Int) -> Int,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
 ): EnterTransition = slideInVertically(
@@ -159,7 +159,7 @@ public fun materialSharedAxisYIn(
  * [materialSharedAxisYOut] allows to switch a layout with shared Y-axis exit transition.
  *
  */
-public fun materialSharedAxisYOut(
+fun materialSharedAxisYOut(
     targetOffsetY: (fullWidth: Int) -> Int,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
 ): ExitTransition = slideOutVertically(
@@ -182,7 +182,7 @@ public fun materialSharedAxisYOut(
  * @param forward whether the direction of the animation is forward.
  * @param durationMillis the duration of transition.
  */
-public fun materialSharedAxisZ(
+fun materialSharedAxisZ(
     forward: Boolean,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
 ): ContentTransform = materialSharedAxisZIn(
@@ -199,7 +199,7 @@ public fun materialSharedAxisZ(
  * @param forward whether the direction of the animation is forward.
  * @param durationMillis the duration of the enter transition.
  */
-public fun materialSharedAxisZIn(
+fun materialSharedAxisZIn(
     forward: Boolean,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
 ): EnterTransition = fadeIn(
@@ -222,7 +222,7 @@ public fun materialSharedAxisZIn(
  * @param forward whether the direction of the animation is forward.
  * @param durationMillis the duration of the exit transition.
  */
-public fun materialSharedAxisZOut(
+fun materialSharedAxisZOut(
     forward: Boolean,
     durationMillis: Int = MotionConstants.DefaultMotionDuration,
 ): ExitTransition = fadeOut(

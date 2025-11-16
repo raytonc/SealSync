@@ -11,7 +11,6 @@ import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.CookieProfile
 import com.junkfood.seal.database.objects.OptionShortcut
 import com.junkfood.seal.database.objects.PlaylistEntry
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 
@@ -31,8 +30,6 @@ object DatabaseUtil {
     }
 
     fun getTemplateFlow() = dao.getTemplateFlow()
-
-    fun getCookiesFlow() = dao.getCookieProfileFlow()
 
     fun getShortcuts() = dao.getOptionShortcuts()
 

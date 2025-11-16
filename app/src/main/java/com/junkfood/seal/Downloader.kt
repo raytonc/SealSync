@@ -12,10 +12,12 @@ import com.junkfood.seal.App.Companion.applicationScope
 import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.App.Companion.startService
 import com.junkfood.seal.App.Companion.stopService
+import com.junkfood.seal.Downloader.downloadVideoInPlaylistByIndexList
+import com.junkfood.seal.Downloader.downloadVideoWithConfigurations
+import com.junkfood.seal.Downloader.getInfoAndDownload
 import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.COMMAND_DIRECTORY
-import com.junkfood.seal.util.CONVERT_M4A
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.Entries
 import com.junkfood.seal.util.FileUtil
@@ -141,8 +143,6 @@ object Downloader {
         }
     }
 
-
-    
 
     private var currentJob: Job? = null
     private var downloadResultTemp: Result<List<String>> = Result.failure(Exception())
@@ -325,8 +325,7 @@ object Downloader {
                         th = it,
                         url = url,
                         title = url,
-                        isFetchingInfo = true,
-                        isTaskAborted = true
+                        isFetchingInfo = true
                     )
                 }
                 .onSuccess { videoInfo ->
@@ -392,8 +391,7 @@ object Downloader {
                     manageDownloadError(
                         th = it,
                         url = url,
-                        isFetchingInfo = true,
-                        isTaskAborted = true
+                        isFetchingInfo = true
                     )
                 }
                 .onSuccess { info ->
@@ -628,16 +626,16 @@ object Downloader {
 
         currentJob = applicationScope.launch(Dispatchers.IO) {
             val preferences = DownloadUtil.DownloadPreferences(
-                extractAudio = true,
-                convertAudio = false,
-                embedMetadata = true
+                convertAudio = false
             )
 
             // helper to normalize titles for filename comparison
-            fun normalizeName(s: String): String = s.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "")
+            fun normalizeName(s: String): String =
+                s.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "")
 
             // Step 1: Fetch all video IDs from all playlists
-            val playlistVideos = mutableMapOf<String, Pair<String, Int>>() // videoId -> (playlistUrl, index)
+            val playlistVideos =
+                mutableMapOf<String, Pair<String, Int>>() // videoId -> (playlistUrl, index)
             val titleToIdTemp = mutableMapOf<String, String>() // normalizedTitle -> videoId
             var totalVideos = 0
 
@@ -659,20 +657,27 @@ object Downloader {
                                 }
                             }
                         }
+
                         is VideoInfo -> {
                             playlistVideos[info.id] = Pair(playlistEntry.url, 0)
-                            info.title.takeIf { it?.isNotEmpty() == true }?.let { ttl ->
-                                titleToIdTemp[normalizeName(ttl!!)] = info.id
+                            info.title.takeIf { it.isNotEmpty() }?.let { ttl ->
+                                titleToIdTemp[normalizeName(ttl)] = info.id
                             }
                             totalVideos++
                         }
                     }
                 }.onFailure { th ->
-                    Log.e(TAG, "syncPlaylists: Failed to fetch playlist '${playlistEntry.title}': ${th.message}")
+                    Log.e(
+                        TAG,
+                        "syncPlaylists: Failed to fetch playlist '${playlistEntry.title}': ${th.message}"
+                    )
                 }
             }
 
-            Log.d(TAG, "syncPlaylists: Found $totalVideos videos across ${playlists.size} playlists")
+            Log.d(
+                TAG,
+                "syncPlaylists: Found $totalVideos videos across ${playlists.size} playlists"
+            )
 
             // Step 2: Scan audio directory for existing files
             val audioDir = File(App.audioDownloadDir)
@@ -686,7 +691,8 @@ object Downloader {
             } ?: emptyList()
 
             // Step 3: Extract video IDs from filenames and also collect normalized basenames
-            val fileVideoIdMap = mutableMapOf<String, File>() // videoId -> File (only when an ID bracket is present)
+            val fileVideoIdMap =
+                mutableMapOf<String, File>() // videoId -> File (only when an ID bracket is present)
             val fileBasenameSet = mutableSetOf<String>() // normalized basenames for title matching
             // accept a wider range of ID lengths to support other extractors, but keep it conservative
             val videoIdPattern = Regex("\\[([a-zA-Z0-9_-]{6,50})\\]")
@@ -700,18 +706,25 @@ object Downloader {
                 }
             }
 
-            Log.d(TAG, "syncPlaylists: Found ${fileVideoIdMap.size} existing files with bracketed IDs and ${fileBasenameSet.size} files total")
+            Log.d(
+                TAG,
+                "syncPlaylists: Found ${fileVideoIdMap.size} existing files with bracketed IDs and ${fileBasenameSet.size} files total"
+            )
 
             // titleToIdTemp was populated during playlist parsing with normalized titles
 
             // Step 4: Determine which playlist items are already present (by ID or by normalized title)
             val matchedVideoIds = mutableSetOf<String>()
-            playlistVideos.forEach { (videoId, urlIndexPair) ->
+            playlistVideos.forEach { (videoId, _) ->
                 if (fileVideoIdMap.containsKey(videoId)) {
                     matchedVideoIds.add(videoId)
                 } else {
                     // try title-based matching using the titles we captured during playlist parsing
-                    titleToIdTemp.entries.find { (normTitle, id) -> id == videoId && fileBasenameSet.contains(normTitle) }
+                    titleToIdTemp.entries.find { (normTitle, id) ->
+                        id == videoId && fileBasenameSet.contains(
+                            normTitle
+                        )
+                    }
                         ?.let { matchedVideoIds.add(videoId) }
                 }
             }
@@ -739,15 +752,27 @@ object Downloader {
             Log.d(TAG, "syncPlaylists: Need to download $downloadCount videos")
 
             // Diagnostic logging to help debug false 'already synced' reports
-            Log.d(TAG, "syncPlaylists: DIAG playlistVideosCount=${playlistVideos.size} playlistVideoIds=${playlistVideos.keys}")
-            Log.d(TAG, "syncPlaylists: DIAG existingFilesCount=${existingFiles.size} filesWithBracketedIds=${fileVideoIdMap.keys}")
+            Log.d(
+                TAG,
+                "syncPlaylists: DIAG playlistVideosCount=${playlistVideos.size} playlistVideoIds=${playlistVideos.keys}"
+            )
+            Log.d(
+                TAG,
+                "syncPlaylists: DIAG existingFilesCount=${existingFiles.size} filesWithBracketedIds=${fileVideoIdMap.keys}"
+            )
             Log.d(TAG, "syncPlaylists: DIAG normalizedFileBasenames=${fileBasenameSet}")
             Log.d(TAG, "syncPlaylists: DIAG matchedVideoIds=${matchedVideoIds}")
-            Log.d(TAG, "syncPlaylists: DIAG videosToDownloadCount=${videosToDownload.size} videosToDownload=${videosToDownload.keys}")
+            Log.d(
+                TAG,
+                "syncPlaylists: DIAG videosToDownloadCount=${videosToDownload.size} videosToDownload=${videosToDownload.keys}"
+            )
 
             // If we detect an unexpected 'already synced' case, emit an additional warning log
             if (playlistVideos.isNotEmpty() && existingFiles.isEmpty() && downloadCount == 0) {
-                Log.w(TAG, "syncPlaylists: WARNING - playlist has items but no files found, yet downloadCount==0. Inspect DIAG logs above.")
+                Log.w(
+                    TAG,
+                    "syncPlaylists: WARNING - playlist has items but no files found, yet downloadCount==0. Inspect DIAG logs above."
+                )
             }
 
             if (downloadCount == 0) {
@@ -781,7 +806,10 @@ object Downloader {
 
                 val (playlistUrl, playlistIndex) = urlAndIndex
 
-                Log.d(TAG, "syncPlaylists: [${index + 1}/$downloadCount] Downloading video ID: $videoId")
+                Log.d(
+                    TAG,
+                    "syncPlaylists: [${index + 1}/$downloadCount] Downloading video ID: $videoId"
+                )
 
                 // Fetch video info
                 val playlistItemParam = if (playlistIndex > 0) playlistIndex else 0

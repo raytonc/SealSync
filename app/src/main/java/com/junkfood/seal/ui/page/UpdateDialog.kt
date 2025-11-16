@@ -92,7 +92,7 @@ fun UpdateDialogImpl(
                         else -> stringResource(R.string.update)
                     },
                     modifier = Modifier.animateContentSize(),
-                    )
+                )
             }
         }, dismissButton = {
             OutlinedButton(onClick = onDismissRequest) { Text(text = stringResource(id = R.string.dismiss)) }

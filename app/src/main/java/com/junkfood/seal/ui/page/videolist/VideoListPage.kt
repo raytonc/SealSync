@@ -13,11 +13,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -34,7 +34,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
@@ -47,15 +46,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.junkfood.seal.App
 import com.junkfood.seal.R
+import com.junkfood.seal.ui.common.AsyncImageImpl
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.common.SVGImage
-import com.junkfood.seal.ui.common.AsyncImageImpl
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.ConfirmButton
 import com.junkfood.seal.ui.component.DismissButton
@@ -283,7 +281,7 @@ fun AudioFileItem(
     isSelected: Boolean,
     onSelect: () -> Unit,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") onLongClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
     val view = LocalView.current
@@ -299,7 +297,7 @@ fun AudioFileItem(
             },
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-            Row(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
@@ -320,7 +318,7 @@ fun AudioFileItem(
                     modifier = Modifier.size(56.dp),
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
-            } ?: androidx.compose.foundation.layout.Box(modifier = Modifier.size(56.dp))
+            } ?: Box(modifier = Modifier.size(56.dp))
 
             Column(
                 modifier = Modifier

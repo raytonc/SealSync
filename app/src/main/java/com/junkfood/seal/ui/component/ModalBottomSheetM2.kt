@@ -89,5 +89,5 @@ fun SealModalBottomSheetM2(
                 )
             }
         },
-    ){}
+    ) {}
 }

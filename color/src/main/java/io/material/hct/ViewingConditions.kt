@@ -88,7 +88,7 @@ class ViewingConditions
             var backgroundLstar = backgroundLstar
             backgroundLstar = max(0.1, backgroundLstar)
             // Transform white point XYZ to 'cone'/'rgb' responses
-            val matrix: Array<DoubleArray> = Cam16.Companion.XYZ_TO_CAM16RGB
+            val matrix: Array<DoubleArray> = Cam16.XYZ_TO_CAM16RGB
             val rW =
                 whitePoint!![0] * matrix[0][0] + whitePoint[1] * matrix[0][1] + whitePoint[2] * matrix[0][2]
             val gW =

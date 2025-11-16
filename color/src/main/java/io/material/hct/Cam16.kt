@@ -127,7 +127,7 @@ class Cam16
      * which are near-identical to the default viewing conditions for sRGB.
      */
     fun toInt(): Int {
-        return viewed(ViewingConditions.Companion.DEFAULT)
+        return viewed(ViewingConditions.DEFAULT)
     }
 
     /**
@@ -208,7 +208,7 @@ class Cam16
          * @param argb ARGB representation of a color.
          */
         fun fromInt(argb: Int): Cam16 {
-            return fromIntInViewingConditions(argb, ViewingConditions.Companion.DEFAULT)
+            return fromIntInViewingConditions(argb, ViewingConditions.DEFAULT)
         }
 
         /**
@@ -309,7 +309,7 @@ class Cam16
          * @param h CAM16 hue
          */
         fun fromJch(j: Double, c: Double, h: Double): Cam16 {
-            return fromJchInViewingConditions(j, c, h, ViewingConditions.Companion.DEFAULT)
+            return fromJchInViewingConditions(j, c, h, ViewingConditions.DEFAULT)
         }
 
         /**
@@ -350,7 +350,7 @@ class Cam16
                 jstar,
                 astar,
                 bstar,
-                ViewingConditions.Companion.DEFAULT
+                ViewingConditions.DEFAULT
             )
         }
 
