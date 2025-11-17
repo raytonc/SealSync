@@ -185,6 +185,14 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE"
+            excludes += "/META-INF/LICENSE.txt"
+            excludes += "/META-INF/license.txt"
+            excludes += "/META-INF/NOTICE"
+            excludes += "/META-INF/NOTICE.txt"
+            excludes += "/META-INF/notice.txt"
+            excludes += "/META-INF/ASL2.0"
         }
         jniLibs.useLegacyPackaging = true
     }
@@ -234,6 +242,11 @@ dependencies {
 
     // Network requests (OkHttp)
     implementation(libs.okhttp)
+
+    //YouTube Data API v3 (for playlist metadata)
+    implementation("com.google.apis:google-api-services-youtube:v3-rev20240213-2.0.0")
+    implementation("com.google.api-client:google-api-client-android:2.2.0")
+    implementation("com.google.http-client:google-http-client-gson:1.43.3")
 
     //YoutubeDl for Android (youtubedl-android)
     implementation(libs.bundles.youtubedlAndroid)

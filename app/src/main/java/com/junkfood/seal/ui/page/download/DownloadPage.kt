@@ -6,6 +6,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Subscriptions
 import androidx.compose.material3.AlertDialog
@@ -55,9 +57,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -67,6 +71,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
 import com.google.accompanist.permissions.isGranted
@@ -83,6 +88,9 @@ import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.ToastUtil
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -97,6 +105,7 @@ fun DownloadPage(
     val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
     val errorState by Downloader.errorState.collectAsStateWithLifecycle()
     val playlists by playlistViewModel.playlistsFlow.collectAsStateWithLifecycle()
+    val addPlaylistState by playlistViewModel.addPlaylistState.collectAsStateWithLifecycle()
 
     var showNotificationDialog by remember { mutableStateOf(false) }
     val notificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -181,12 +190,14 @@ fun DownloadPage(
 
     if (showAddPlaylistDialog) {
         AddPlaylistDialog(
-            onDismiss = { showAddPlaylistDialog = false },
-            onConfirm = { title, url ->
-                playlistViewModel.addPlaylist(title, url)
+            onDismiss = {
                 showAddPlaylistDialog = false
+                playlistViewModel.resetAddPlaylistState()
             },
-            defaultNumber = playlistViewModel.getNextPlaylistNumber()
+            onConfirm = { url ->
+                playlistViewModel.addPlaylistFromUrl(url)
+            },
+            addPlaylistState = addPlaylistState
         )
     }
 
@@ -335,31 +346,94 @@ fun PlaylistItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .padding(vertical = 4.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            // Square Thumbnail (56dp x 56dp)
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                playlist.thumbnailUrl?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = playlist.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } ?: Icon(
+                    imageVector = Icons.Outlined.PlaylistPlay,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
                     text = playlist.title,
                     style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = playlist.url,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    playlist.channelTitle?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+
+                    if (playlist.videoCount > 0) {
+                        if (playlist.channelTitle != null) {
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "${playlist.videoCount} videos",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Last synced info
+                if (playlist.lastSynced > 0) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Synced ${formatRelativeTime(playlist.lastSynced)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
             }
+
             Box {
                 IconButton(onClick = { expanded = true }) {
                     Icon(Icons.Outlined.MoreVert, contentDescription = "More options")
@@ -388,51 +462,93 @@ fun PlaylistItem(
     }
 }
 
+// Helper function for relative time display
+private fun formatRelativeTime(timestamp: Long): String {
+    val now = System.currentTimeMillis()
+    val diff = now - timestamp
+
+    return when {
+        diff < 60_000 -> "just now"
+        diff < 3600_000 -> "${diff / 60_000}m ago"
+        diff < 86400_000 -> "${diff / 3600_000}h ago"
+        diff < 604800_000 -> "${diff / 86400_000}d ago"
+        else -> SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(timestamp))
+    }
+}
+
 @Composable
 fun AddPlaylistDialog(
     onDismiss: () -> Unit,
-    onConfirm: (String, String) -> Unit,
-    defaultNumber: Int
+    onConfirm: (String) -> Unit,
+    addPlaylistState: AddPlaylistState
 ) {
-    var title by remember { mutableStateOf("Playlist $defaultNumber") }
     var url by remember { mutableStateOf("") }
+    val isLoading = addPlaylistState is AddPlaylistState.Loading
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isLoading) onDismiss() },
         title = { Text("Add Playlist") },
         text = {
             Column {
                 OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Title") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("Playlist URL") },
+                    label = { Text("YouTube Playlist URL") },
+                    placeholder = { Text("https://youtube.com/playlist?list=...") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    enabled = !isLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = addPlaylistState is AddPlaylistState.Error
                 )
+
+                when (addPlaylistState) {
+                    is AddPlaylistState.Loading -> {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            Text(
+                                "Fetching playlist info...",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    is AddPlaylistState.Error -> {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = addPlaylistState.message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    is AddPlaylistState.Success -> {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            onDismiss()
+                        }
+                    }
+                    else -> {}
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     if (url.isNotBlank()) {
-                        onConfirm(title.ifBlank { "Playlist $defaultNumber" }, url)
+                        onConfirm(url)
                     }
                 },
-                enabled = url.isNotBlank()
+                enabled = url.isNotBlank() && !isLoading
             ) {
                 Text("Add")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isLoading
+            ) {
                 Text("Cancel")
             }
         }

@@ -88,6 +88,7 @@ object DatabaseUtil {
     fun getPlaylistsFlow() = dao.getPlaylistsFlow()
     suspend fun getPlaylists() = dao.getPlaylists()
     suspend fun insertPlaylist(playlist: PlaylistEntry) = dao.insertPlaylist(playlist)
+    suspend fun updatePlaylist(playlist: PlaylistEntry) = dao.updatePlaylist(playlist)
     suspend fun deletePlaylist(playlist: PlaylistEntry) = dao.deletePlaylist(playlist)
     suspend fun deletePlaylistById(id: Int) = dao.deletePlaylistById(id)
 }

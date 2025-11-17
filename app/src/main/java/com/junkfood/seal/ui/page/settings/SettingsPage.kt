@@ -21,8 +21,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.EnergySavingsLeaf
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.SettingsApplications
 import androidx.compose.material.icons.rounded.VolunteerActivism
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBarDefaults
@@ -50,8 +59,11 @@ import com.junkfood.seal.ui.component.SettingTitle
 import com.junkfood.seal.ui.component.SmallTopAppBar
 import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.CUSTOM_COMMAND
+import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
+import com.junkfood.seal.util.PreferenceUtil.getString
+import com.junkfood.seal.util.PreferenceUtil.updateString
 import com.junkfood.seal.util.ShortcutUtil
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.UpdateUtil
@@ -111,6 +123,9 @@ fun SettingsPage(
     var isCustomCommandEnabled by remember { mutableStateOf(CUSTOM_COMMAND.getBoolean()) }
     var audioDirectoryText by remember { mutableStateOf(App.audioDownloadDir) }
     var editingDirectory by remember { mutableStateOf(Directory.AUDIO) }
+
+    var showApiKeyDialog by remember { mutableStateOf(false) }
+    var currentApiKey by remember { mutableStateOf(YOUTUBE_API_KEY.getString()) }
 
     val dirLauncher =
         rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
@@ -240,6 +255,19 @@ fun SettingsPage(
 
             item {
                 PreferenceItem(
+                    title = "YouTube API Key",
+                    description = if (currentApiKey.isNotEmpty())
+                        "${currentApiKey.take(10)}..."
+                    else
+                        "Not configured",
+                    icon = Icons.Rounded.Key
+                ) {
+                    showApiKeyDialog = true
+                }
+            }
+
+            item {
+                PreferenceItem(
                     title = stringResource(id = R.string.pin_shortcut),
                     description = stringResource(id = R.string.pin_shortcut_desc),
                     icon = Icons.Rounded.SettingsApplications
@@ -273,5 +301,61 @@ fun SettingsPage(
                 ) { onNavigateTo(Route.CREDITS) }
             }
         }
+
+        if (showApiKeyDialog) {
+            YouTubeApiKeyDialog(
+                onDismiss = { showApiKeyDialog = false },
+                onConfirm = { newKey ->
+                    YOUTUBE_API_KEY.updateString(newKey)
+                    currentApiKey = newKey
+                    showApiKeyDialog = false
+                },
+                currentKey = currentApiKey
+            )
+        }
     }
+}
+
+@Composable
+fun YouTubeApiKeyDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+    currentKey: String = ""
+) {
+    var apiKey by remember { mutableStateOf(currentKey) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("YouTube API Key") },
+        text = {
+            Column {
+                Text(
+                    text = "Enter your YouTube Data API v3 key. You can get one from Google Cloud Console.",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    label = { Text("API Key") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("AIzaSy...") }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(apiKey.trim()) },
+                enabled = apiKey.trim().isNotBlank()
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

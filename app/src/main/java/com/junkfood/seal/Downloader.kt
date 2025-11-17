@@ -18,6 +18,8 @@ import com.junkfood.seal.Downloader.getInfoAndDownload
 import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.COMMAND_DIRECTORY
+import com.junkfood.seal.util.CONVERT_WAV
+import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.Entries
 import com.junkfood.seal.util.FileUtil
@@ -28,6 +30,8 @@ import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.VideoClip
 import com.junkfood.seal.util.VideoInfo
+import com.junkfood.seal.util.YOUTUBE_API_KEY
+import com.junkfood.seal.util.YouTubeApiService
 import com.junkfood.seal.util.toHttpsUrl
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
@@ -621,12 +625,58 @@ object Downloader {
             return
         }
 
+        // Check if YouTube API key is configured
+        val apiKey = YOUTUBE_API_KEY.getString()
+        if (apiKey.isBlank()) {
+            ToastUtil.makeToast("YouTube API key not configured. Please add one in Settings.")
+            return
+        }
+
         Log.d(TAG, "syncPlaylists: Starting sync for ${playlists.size} playlists")
         mutableDownloaderState.update { State.DownloadingPlaylist() }
 
         currentJob = applicationScope.launch(Dispatchers.IO) {
+            // === Refresh playlist metadata via YouTube API ===
+            if (apiKey.isNotBlank()) {
+                Log.d(TAG, "syncPlaylists: Refreshing metadata for ${playlists.size} playlists")
+
+                playlists.forEachIndexed { index, playlist ->
+                    try {
+                        val playlistId = playlist.playlistId
+                            ?: YouTubeApiService.extractPlaylistId(playlist.url)
+
+                        playlistId?.let { id ->
+                            val info = YouTubeApiService.getPlaylistInfo(id, apiKey)
+                            info?.let {
+                                val updated = playlist.copy(
+                                    title = it.title,
+                                    thumbnailUrl = it.thumbnailUrl,
+                                    videoCount = it.videoCount,
+                                    channelTitle = it.channelTitle,
+                                    description = it.description,
+                                    lastSynced = System.currentTimeMillis(),
+                                    playlistId = id
+                                )
+                                DatabaseUtil.updatePlaylist(updated)
+                                Log.d(TAG, "syncPlaylists: Updated metadata for: ${it.title}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "syncPlaylists: Failed to refresh metadata for ${playlist.title}", e)
+                        // Continue with other playlists even if one fails
+                    }
+                }
+
+                ToastUtil.makeToastSuspend("Playlist metadata refreshed")
+            } else {
+                Log.w(TAG, "syncPlaylists: YouTube API key not configured, skipping metadata refresh")
+            }
+
             val preferences = DownloadUtil.DownloadPreferences(
-                convertAudio = false
+                extractAudio = true,
+                embedThumbnail = true,
+                embedMetadata = true,
+                cropArtwork = true
             )
 
             // helper to normalize titles for filename comparison

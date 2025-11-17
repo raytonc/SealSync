@@ -82,6 +82,9 @@ interface VideoInfoDao {
     @Insert
     suspend fun insertPlaylist(playlist: PlaylistEntry): Long
 
+    @Update
+    suspend fun updatePlaylist(playlist: PlaylistEntry)
+
     @Delete
     suspend fun deletePlaylist(playlist: PlaylistEntry)
 

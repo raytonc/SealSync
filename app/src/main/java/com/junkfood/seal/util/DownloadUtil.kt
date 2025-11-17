@@ -455,6 +455,8 @@ object DownloadUtil {
                 addOption("--embed-metadata")
                 addOption("--embed-thumbnail")
                 addOption("--convert-thumbnails", "jpg")
+                addOption("--write-info-json")  // Save metadata JSON file
+                addOption("--write-thumbnail")  // Save thumbnail as separate file
 
                 if (cropArtwork) {
                     val configFile = context.getConfigFile(id)
