@@ -533,6 +533,7 @@ object DownloadUtil {
                     addOption("--playlist-items", playlistItem)
                     if (subdirectoryPlaylistTitle && !videoInfo.playlist.isNullOrEmpty()) {
                         outputBuilder.append(PLAYLIST_TITLE_SUBDIRECTORY_PREFIX)
+                        addOption("--restrict-filenames")
                     }
                 } else {
                     addOption("--no-playlist")
