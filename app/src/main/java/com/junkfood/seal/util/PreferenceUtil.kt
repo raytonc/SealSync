@@ -73,6 +73,7 @@ const val COOKIES = "cookies"
 const val USER_AGENT = "user_agent"
 const val USER_AGENT_STRING = "user_agent_string"
 const val YOUTUBE_API_KEY = "youtube_api_key"
+const val YOUTUBE_CHANNEL_HANDLE = "youtube_channel_handle"
 const val AUTO_UPDATE = "auto_update"
 const val UPDATE_CHANNEL = "update_channel"
 const val PRIVATE_MODE = "private_mode"
@@ -178,6 +179,7 @@ private val StringPreferenceDefaults = mapOf(
     OUTPUT_TEMPLATE to DownloadUtil.OUTPUT_TEMPLATE_ID,
     CUSTOM_OUTPUT_TEMPLATE to DownloadUtil.OUTPUT_TEMPLATE_ID,
     YOUTUBE_API_KEY to "",
+    YOUTUBE_CHANNEL_HANDLE to "",
 )
 
 private val BooleanPreferenceDefaults = mapOf(

@@ -133,4 +133,106 @@ object YouTubeApiService {
             null
         }
     }
+
+    data class ChannelPlaylistInfo(
+        val id: String,
+        val title: String,
+        val description: String?,
+        val thumbnailUrl: String?,
+        val itemCount: Int
+    )
+
+    /**
+     * Converts a YouTube channel handle (@username) to channel ID
+     */
+    suspend fun getChannelIdFromHandle(handle: String, apiKey: String): String? = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val youtube = YouTube.Builder(
+                NetHttpTransport(),
+                GsonFactory.getDefaultInstance(),
+                null
+            )
+                .setApplicationName("SealSync")
+                .build()
+
+            // Clean the handle (remove @ if present)
+            val cleanHandle = handle.removePrefix("@")
+
+            // Search for channel by handle
+            val searchRequest = youtube.channels()
+                .list(listOf("id"))
+                .setKey(apiKey)
+                .setForHandle(cleanHandle)
+                .setMaxResults(1)
+
+            val response = searchRequest.execute()
+
+            if (response.items.isNullOrEmpty()) {
+                Log.e(TAG, "Channel not found for handle: $cleanHandle")
+                return@withContext null
+            }
+
+            response.items[0].id
+        } catch (e: Exception) {
+            Log.e(TAG, "Error converting handle to channel ID", e)
+            null
+        }
+    }
+
+    /**
+     * Fetches all public playlists from a channel
+     */
+    suspend fun getChannelPlaylists(channelId: String, apiKey: String): List<ChannelPlaylistInfo>? = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val youtube = YouTube.Builder(
+                NetHttpTransport(),
+                GsonFactory.getDefaultInstance(),
+                null
+            )
+                .setApplicationName("SealSync")
+                .build()
+
+            val playlists = mutableListOf<ChannelPlaylistInfo>()
+            var nextPageToken: String? = null
+
+            do {
+                val request = youtube.playlists()
+                    .list(listOf("snippet", "contentDetails"))
+                    .setKey(apiKey)
+                    .setChannelId(channelId)
+                    .setMaxResults(50)
+
+                if (nextPageToken != null) {
+                    request.pageToken = nextPageToken
+                }
+
+                val response = request.execute()
+
+                response.items?.forEach { playlist ->
+                    val snippet = playlist.snippet
+                    val contentDetails = playlist.contentDetails
+                    val thumbnails = snippet?.thumbnails
+
+                    playlists.add(
+                        ChannelPlaylistInfo(
+                            id = playlist.id,
+                            title = snippet?.title ?: "Untitled",
+                            description = snippet?.description,
+                            thumbnailUrl = thumbnails?.medium?.url
+                                ?: thumbnails?.high?.url
+                                ?: thumbnails?.default?.url,
+                            itemCount = contentDetails?.itemCount?.toInt() ?: 0
+                        )
+                    )
+                }
+
+                nextPageToken = response.nextPageToken
+            } while (nextPageToken != null)
+
+            playlists
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching channel playlists", e)
+            null
+        }
+    }
 }

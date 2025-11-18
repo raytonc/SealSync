@@ -735,6 +735,19 @@ object Downloader {
                 audioDir.mkdirs()
             }
 
+            // Clean up old playlist metadata files to avoid MediaStore conflicts
+            try {
+                audioDir.listFiles()?.forEach { file ->
+                    // Delete playlist-level metadata files (contains playlist ID in brackets)
+                    if (file.name.matches(Regex(".*\\[PL[a-zA-Z0-9_-]+\\]\\.(info\\.json|jpg|jpeg|png|webp).*"))) {
+                        file.delete()
+                        Log.d(TAG, "syncPlaylists: Cleaned up old playlist metadata: ${file.name}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "syncPlaylists: Failed to clean up old metadata files", e)
+            }
+
             val allowedExts = listOf("mp3", "m4a", "wav", "aac", "opus", "ogg", "webm")
             val existingFiles = audioDir.listFiles()?.filter { file ->
                 file.isFile && file.extension.lowercase() in allowedExts

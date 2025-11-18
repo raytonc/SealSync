@@ -60,6 +60,7 @@ import com.junkfood.seal.ui.component.SmallTopAppBar
 import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.CUSTOM_COMMAND
 import com.junkfood.seal.util.YOUTUBE_API_KEY
+import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -126,6 +127,9 @@ fun SettingsPage(
 
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var currentApiKey by remember { mutableStateOf(YOUTUBE_API_KEY.getString()) }
+
+    var showChannelHandleDialog by remember { mutableStateOf(false) }
+    var currentChannelHandle by remember { mutableStateOf(YOUTUBE_CHANNEL_HANDLE.getString()) }
 
     val dirLauncher =
         rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
@@ -268,6 +272,19 @@ fun SettingsPage(
 
             item {
                 PreferenceItem(
+                    title = "YouTube Channel Handle",
+                    description = if (currentChannelHandle.isNotEmpty())
+                        "@$currentChannelHandle"
+                    else
+                        "Not configured",
+                    icon = Icons.Rounded.SettingsApplications
+                ) {
+                    showChannelHandleDialog = true
+                }
+            }
+
+            item {
+                PreferenceItem(
                     title = stringResource(id = R.string.pin_shortcut),
                     description = stringResource(id = R.string.pin_shortcut_desc),
                     icon = Icons.Rounded.SettingsApplications
@@ -313,7 +330,64 @@ fun SettingsPage(
                 currentKey = currentApiKey
             )
         }
+
+        if (showChannelHandleDialog) {
+            YouTubeChannelHandleDialog(
+                onDismiss = { showChannelHandleDialog = false },
+                onConfirm = { newHandle ->
+                    YOUTUBE_CHANNEL_HANDLE.updateString(newHandle)
+                    currentChannelHandle = newHandle
+                    showChannelHandleDialog = false
+                },
+                currentHandle = currentChannelHandle
+            )
+        }
     }
+}
+
+@Composable
+fun YouTubeChannelHandleDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+    currentHandle: String = ""
+) {
+    var handle by remember { mutableStateOf(currentHandle) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("YouTube Channel Handle") },
+        text = {
+            Column {
+                Text(
+                    text = "Enter the YouTube channel handle (without @)",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = handle,
+                    onValueChange = { handle = it.removePrefix("@") },
+                    label = { Text("Channel Handle") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("channelname") },
+                    prefix = { Text("@") }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(handle.trim().removePrefix("@")) },
+                enabled = handle.trim().isNotBlank()
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

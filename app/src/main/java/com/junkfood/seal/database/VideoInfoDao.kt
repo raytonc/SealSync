@@ -90,4 +90,7 @@ interface VideoInfoDao {
 
     @Query("DELETE FROM PlaylistEntry WHERE id = :id")
     suspend fun deletePlaylistById(id: Int)
+
+    @Query("SELECT * FROM PlaylistEntry WHERE url = :url OR playlistId = :playlistId LIMIT 1")
+    suspend fun findDuplicatePlaylist(url: String, playlistId: String?): PlaylistEntry?
 }

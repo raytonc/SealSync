@@ -6,6 +6,7 @@ import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.YOUTUBE_API_KEY
+import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.junkfood.seal.util.YouTubeApiService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +25,13 @@ sealed class AddPlaylistState {
     data class Error(val message: String) : AddPlaylistState()
 }
 
+sealed class ChannelPlaylistsState {
+    object Idle : ChannelPlaylistsState()
+    object Loading : ChannelPlaylistsState()
+    data class Success(val playlists: List<YouTubeApiService.ChannelPlaylistInfo>) : ChannelPlaylistsState()
+    data class Error(val message: String) : ChannelPlaylistsState()
+}
+
 @HiltViewModel
 class PlaylistViewModel @Inject constructor() : ViewModel() {
 
@@ -36,6 +44,9 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
 
     private val _addPlaylistState = MutableStateFlow<AddPlaylistState>(AddPlaylistState.Idle)
     val addPlaylistState: StateFlow<AddPlaylistState> = _addPlaylistState.asStateFlow()
+
+    private val _channelPlaylistsState = MutableStateFlow<ChannelPlaylistsState>(ChannelPlaylistsState.Idle)
+    val channelPlaylistsState: StateFlow<ChannelPlaylistsState> = _channelPlaylistsState.asStateFlow()
 
     fun addPlaylistFromUrl(url: String) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -53,6 +64,13 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
                 val playlistId = YouTubeApiService.extractPlaylistId(url)
                 if (playlistId == null) {
                     _addPlaylistState.value = AddPlaylistState.Error("Invalid YouTube playlist URL")
+                    return@launch
+                }
+
+                // Check for duplicates
+                val duplicate = DatabaseUtil.findDuplicatePlaylist(url, playlistId)
+                if (duplicate != null) {
+                    _addPlaylistState.value = AddPlaylistState.Error("This playlist is already in your library")
                     return@launch
                 }
 
@@ -128,5 +146,90 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
 
     fun getNextPlaylistNumber(): Int {
         return (playlistsFlow.value.size + 1)
+    }
+
+    fun fetchChannelPlaylists() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _channelPlaylistsState.value = ChannelPlaylistsState.Loading
+
+            try {
+                // Check if API key is configured
+                val apiKey = YOUTUBE_API_KEY.getString()
+                if (apiKey.isBlank()) {
+                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("YouTube API key not configured. Please add one in Settings.")
+                    return@launch
+                }
+
+                // Check if channel handle is configured
+                val handle = YOUTUBE_CHANNEL_HANDLE.getString()
+                if (handle.isBlank()) {
+                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("YouTube channel handle not configured. Please add one in Settings.")
+                    return@launch
+                }
+
+                // Convert handle to channel ID
+                val channelId = YouTubeApiService.getChannelIdFromHandle(handle, apiKey)
+                if (channelId == null) {
+                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("Failed to find channel. Check your channel handle.")
+                    return@launch
+                }
+
+                // Fetch channel playlists
+                val playlists = YouTubeApiService.getChannelPlaylists(channelId, apiKey)
+                if (playlists == null) {
+                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("Failed to fetch playlists. Check your API key and internet connection.")
+                    return@launch
+                }
+
+                if (playlists.isEmpty()) {
+                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("This channel has no public playlists.")
+                    return@launch
+                }
+
+                _channelPlaylistsState.value = ChannelPlaylistsState.Success(playlists)
+            } catch (e: Exception) {
+                _channelPlaylistsState.value = ChannelPlaylistsState.Error(e.message ?: "Unknown error occurred")
+            }
+        }
+    }
+
+    fun addPlaylistFromChannel(channelPlaylist: YouTubeApiService.ChannelPlaylistInfo) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiKey = YOUTUBE_API_KEY.getString()
+                if (apiKey.isBlank()) return@launch
+
+                val playlistUrl = "https://www.youtube.com/playlist?list=${channelPlaylist.id}"
+
+                // Check for duplicates
+                val duplicate = DatabaseUtil.findDuplicatePlaylist(playlistUrl, channelPlaylist.id)
+                if (duplicate != null) {
+                    // Silently skip duplicates when adding from channel
+                    return@launch
+                }
+
+                // Create PlaylistEntry with channel playlist info
+                val playlist = PlaylistEntry(
+                    id = 0,
+                    title = channelPlaylist.title,
+                    url = playlistUrl,
+                    thumbnailUrl = channelPlaylist.thumbnailUrl,
+                    playlistId = channelPlaylist.id,
+                    videoCount = channelPlaylist.itemCount,
+                    channelTitle = null, // Will be filled during sync
+                    description = channelPlaylist.description,
+                    lastSynced = 0 // Will be synced later
+                )
+
+                // Insert to database
+                DatabaseUtil.insertPlaylist(playlist)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun resetChannelPlaylistsState() {
+        _channelPlaylistsState.value = ChannelPlaylistsState.Idle
     }
 }

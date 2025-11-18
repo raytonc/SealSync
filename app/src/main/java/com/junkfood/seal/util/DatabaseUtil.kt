@@ -91,4 +91,5 @@ object DatabaseUtil {
     suspend fun updatePlaylist(playlist: PlaylistEntry) = dao.updatePlaylist(playlist)
     suspend fun deletePlaylist(playlist: PlaylistEntry) = dao.deletePlaylist(playlist)
     suspend fun deletePlaylistById(id: Int) = dao.deletePlaylistById(id)
+    suspend fun findDuplicatePlaylist(url: String, playlistId: String?) = dao.findDuplicatePlaylist(url, playlistId)
 }

@@ -194,7 +194,7 @@ object DownloadUtil {
         val aria2c: Boolean = PreferenceUtil.getValue(ARIA2C),
         val audioFormat: Int = AUDIO_FORMAT.getInt(),
         val audioQuality: Int = NOT_SPECIFIED, // Always unlimited quality
-        val convertAudio: Boolean = true, // Always convert audio
+        val convertAudio: Boolean = false, // Don't convert audio - use original format
         val formatSorting: Boolean = FORMAT_SORTING.getBoolean(),
         val sortingFields: String = SORTING_FIELDS.getString(),
         val audioConvertFormat: Int = CONVERT_M4A, // Default convert to M4A (changed from WAV)

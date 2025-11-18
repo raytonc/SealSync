@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Subscriptions
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -88,6 +89,7 @@ import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.ToastUtil
+import com.junkfood.seal.util.YouTubeApiService
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -106,6 +108,7 @@ fun DownloadPage(
     val errorState by Downloader.errorState.collectAsStateWithLifecycle()
     val playlists by playlistViewModel.playlistsFlow.collectAsStateWithLifecycle()
     val addPlaylistState by playlistViewModel.addPlaylistState.collectAsStateWithLifecycle()
+    val channelPlaylistsState by playlistViewModel.channelPlaylistsState.collectAsStateWithLifecycle()
 
     var showNotificationDialog by remember { mutableStateOf(false) }
     val notificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -118,6 +121,7 @@ fun DownloadPage(
     } else null
 
     var showAddPlaylistDialog by rememberSaveable { mutableStateOf(false) }
+    var showChannelPlaylistsDialog by rememberSaveable { mutableStateOf(false) }
     var showMeteredNetworkDialog by remember { mutableStateOf(false) }
 
     val checkNetworkOrDownload = {
@@ -201,6 +205,23 @@ fun DownloadPage(
         )
     }
 
+    if (showChannelPlaylistsDialog) {
+        ChannelPlaylistsDialog(
+            onDismiss = {
+                showChannelPlaylistsDialog = false
+                playlistViewModel.resetChannelPlaylistsState()
+            },
+            onPlaylistSelected = { channelPlaylist ->
+                playlistViewModel.addPlaylistFromChannel(channelPlaylist)
+            },
+            channelPlaylistsState = channelPlaylistsState,
+            onFetch = {
+                playlistViewModel.fetchChannelPlaylists()
+            },
+            existingPlaylists = playlists
+        )
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -255,9 +276,15 @@ fun DownloadPage(
                 horizontalAlignment = Alignment.End
             ) {
                 ExtendedFloatingActionButton(
+                    onClick = { showChannelPlaylistsDialog = true },
+                    icon = { Icon(Icons.Outlined.Subscriptions, contentDescription = "Add Playlists from Channel") },
+                    text = { Text("Add from Channel") },
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+                ExtendedFloatingActionButton(
                     onClick = { showAddPlaylistDialog = true },
-                    icon = { Icon(Icons.Filled.Add, contentDescription = "Add Playlist") },
-                    text = { Text("Add playlist") },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = "Add Playlist by URL") },
+                    text = { Text("Add Playlist by URL") },
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
                 val isSyncing = downloaderState is Downloader.State.DownloadingPlaylist
@@ -487,7 +514,7 @@ fun AddPlaylistDialog(
 
     AlertDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
-        title = { Text("Add Playlist") },
+        title = { Text("Add Playlist by URL") },
         text = {
             Column {
                 OutlinedTextField(
@@ -553,6 +580,186 @@ fun AddPlaylistDialog(
             }
         }
     )
+}
+
+@Composable
+fun ChannelPlaylistsDialog(
+    onDismiss: () -> Unit,
+    onPlaylistSelected: (YouTubeApiService.ChannelPlaylistInfo) -> Unit,
+    channelPlaylistsState: ChannelPlaylistsState,
+    onFetch: () -> Unit,
+    existingPlaylists: List<PlaylistEntry>
+) {
+    // Auto-fetch when dialog opens
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (channelPlaylistsState is ChannelPlaylistsState.Idle) {
+            onFetch()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Playlists from Channel") },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(400.dp)
+            ) {
+                when (channelPlaylistsState) {
+                    is ChannelPlaylistsState.Loading -> {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                "Fetching channel playlists...",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                    is ChannelPlaylistsState.Error -> {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Error,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = channelPlaylistsState.message,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                    is ChannelPlaylistsState.Success -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(channelPlaylistsState.playlists, key = { it.id }) { playlist ->
+                                val isAlreadyAdded = existingPlaylists.any {
+                                    it.playlistId == playlist.id || it.url.contains(playlist.id)
+                                }
+
+                                ChannelPlaylistItem(
+                                    playlist = playlist,
+                                    isAlreadyAdded = isAlreadyAdded,
+                                    onClick = {
+                                        if (!isAlreadyAdded) {
+                                            onPlaylistSelected(playlist)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    is ChannelPlaylistsState.Idle -> {
+                        // Should not reach here due to LaunchedEffect
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        }
+    )
+}
+
+@Composable
+fun ChannelPlaylistItem(
+    playlist: YouTubeApiService.ChannelPlaylistInfo,
+    isAlreadyAdded: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable(enabled = !isAlreadyAdded, onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isAlreadyAdded)
+                MaterialTheme.colorScheme.surfaceVariant
+            else
+                MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Thumbnail
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                if (playlist.thumbnailUrl != null) {
+                    AsyncImage(
+                        model = playlist.thumbnailUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.PlaylistPlay,
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Text info
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = playlist.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (isAlreadyAdded)
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else
+                        MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${playlist.itemCount} videos",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Already added indicator
+            if (isAlreadyAdded) {
+                Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.CheckCircle,
+                    contentDescription = "Already added",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable
