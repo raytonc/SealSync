@@ -66,3 +66,36 @@
 #-keepnames class <1>$$serializer { # -keepnames suffices; class is kept when serializer() is kept.
 #    static <1>$$serializer INSTANCE;
 #}
+
+# ===== Google API Client (CRITICAL FOR API CALLS) =====
+-keep class com.google.api.client.** { *; }
+-keepclassmembers class com.google.api.client.** { *; }
+
+# Keep Google API services - YouTube Data API models
+-keep class com.google.api.services.** { *; }
+-keepclassmembers class com.google.api.services.** { *; }
+
+# Keep Google HTTP Client
+-keep class com.google.http.** { *; }
+-keepclassmembers class com.google.http.** { *; }
+
+# ===== Gson (used by Google API Client) =====
+-keep class com.google.gson.** { *; }
+-keep class sun.misc.Unsafe { *; }
+
+-keepclassmembers class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
+
+-keepattributes Signature
+
+# ===== OkHttp =====
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }
+
+# ===== App Data Classes =====
+-keep class com.junkfood.seal.util.YouTubeApiService$** { *; }
+-keep class com.junkfood.seal.util.Cookie { *; }
