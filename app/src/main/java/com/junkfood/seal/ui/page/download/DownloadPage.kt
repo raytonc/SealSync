@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Delete
@@ -58,7 +59,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -277,7 +277,12 @@ fun DownloadPage(
             ) {
                 ExtendedFloatingActionButton(
                     onClick = { showChannelPlaylistsDialog = true },
-                    icon = { Icon(Icons.Outlined.Subscriptions, contentDescription = "Add Playlists from Channel") },
+                    icon = {
+                        Icon(
+                            Icons.Outlined.Subscriptions,
+                            contentDescription = "Add Playlists from Channel"
+                        )
+                    },
                     text = { Text("Add from Channel") },
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
@@ -533,7 +538,9 @@ fun AddPlaylistDialog(
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(
+                                8.dp
+                            )
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp))
                             Text(
@@ -542,6 +549,7 @@ fun AddPlaylistDialog(
                             )
                         }
                     }
+
                     is AddPlaylistState.Error -> {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
@@ -550,11 +558,13 @@ fun AddPlaylistDialog(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+
                     is AddPlaylistState.Success -> {
                         androidx.compose.runtime.LaunchedEffect(Unit) {
                             onDismiss()
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -621,6 +631,7 @@ fun ChannelPlaylistsDialog(
                             )
                         }
                     }
+
                     is ChannelPlaylistsState.Error -> {
                         Column(
                             modifier = Modifier.fillMaxSize(),
@@ -642,6 +653,7 @@ fun ChannelPlaylistsDialog(
                             )
                         }
                     }
+
                     is ChannelPlaylistsState.Success -> {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize()
@@ -663,6 +675,7 @@ fun ChannelPlaylistsDialog(
                             }
                         }
                     }
+
                     is ChannelPlaylistsState.Idle -> {
                         // Should not reach here due to LaunchedEffect
                     }

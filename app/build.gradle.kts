@@ -166,7 +166,14 @@ android {
     }
 
     lint {
-        disable.addAll(listOf("MissingTranslation", "ExtraTranslation", "MissingQuantity", "DuplicatePlatformClasses"))
+        disable.addAll(
+            listOf(
+                "MissingTranslation",
+                "ExtraTranslation",
+                "MissingQuantity",
+                "DuplicatePlatformClasses"
+            )
+        )
     }
 
     applicationVariants.all {

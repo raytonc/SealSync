@@ -13,7 +13,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,15 +27,11 @@ import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.SettingsApplications
 import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -52,15 +50,11 @@ import com.junkfood.seal.R
 import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.PreferenceItem
-import com.junkfood.seal.ui.component.PreferenceSwitch
-import com.junkfood.seal.ui.component.PreferenceSwitchWithDivider
 import com.junkfood.seal.ui.component.PreferencesHintCard
 import com.junkfood.seal.ui.component.SettingTitle
 import com.junkfood.seal.ui.component.SmallTopAppBar
 import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.CUSTOM_COMMAND
-import com.junkfood.seal.util.YOUTUBE_API_KEY
-import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -68,6 +62,8 @@ import com.junkfood.seal.util.PreferenceUtil.updateString
 import com.junkfood.seal.util.ShortcutUtil
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.UpdateUtil
+import com.junkfood.seal.util.YOUTUBE_API_KEY
+import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.launch
 

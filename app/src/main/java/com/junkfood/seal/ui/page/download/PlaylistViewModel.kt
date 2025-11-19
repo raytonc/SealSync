@@ -28,7 +28,9 @@ sealed class AddPlaylistState {
 sealed class ChannelPlaylistsState {
     object Idle : ChannelPlaylistsState()
     object Loading : ChannelPlaylistsState()
-    data class Success(val playlists: List<YouTubeApiService.ChannelPlaylistInfo>) : ChannelPlaylistsState()
+    data class Success(val playlists: List<YouTubeApiService.ChannelPlaylistInfo>) :
+        ChannelPlaylistsState()
+
     data class Error(val message: String) : ChannelPlaylistsState()
 }
 
@@ -45,8 +47,10 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
     private val _addPlaylistState = MutableStateFlow<AddPlaylistState>(AddPlaylistState.Idle)
     val addPlaylistState: StateFlow<AddPlaylistState> = _addPlaylistState.asStateFlow()
 
-    private val _channelPlaylistsState = MutableStateFlow<ChannelPlaylistsState>(ChannelPlaylistsState.Idle)
-    val channelPlaylistsState: StateFlow<ChannelPlaylistsState> = _channelPlaylistsState.asStateFlow()
+    private val _channelPlaylistsState =
+        MutableStateFlow<ChannelPlaylistsState>(ChannelPlaylistsState.Idle)
+    val channelPlaylistsState: StateFlow<ChannelPlaylistsState> =
+        _channelPlaylistsState.asStateFlow()
 
     fun addPlaylistFromUrl(url: String) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -56,7 +60,8 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
                 // Check if API key is configured
                 val apiKey = YOUTUBE_API_KEY.getString()
                 if (apiKey.isBlank()) {
-                    _addPlaylistState.value = AddPlaylistState.Error("YouTube API key not configured. Please add one in Settings.")
+                    _addPlaylistState.value =
+                        AddPlaylistState.Error("YouTube API key not configured. Please add one in Settings.")
                     return@launch
                 }
 
@@ -70,14 +75,16 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
                 // Check for duplicates
                 val duplicate = DatabaseUtil.findDuplicatePlaylist(url, playlistId)
                 if (duplicate != null) {
-                    _addPlaylistState.value = AddPlaylistState.Error("This playlist is already in your library")
+                    _addPlaylistState.value =
+                        AddPlaylistState.Error("This playlist is already in your library")
                     return@launch
                 }
 
                 // Fetch playlist info from YouTube API
                 val info = YouTubeApiService.getPlaylistInfo(playlistId, apiKey)
                 if (info == null) {
-                    _addPlaylistState.value = AddPlaylistState.Error("Failed to fetch playlist info. Check your API key and internet connection.")
+                    _addPlaylistState.value =
+                        AddPlaylistState.Error("Failed to fetch playlist info. Check your API key and internet connection.")
                     return@launch
                 }
 
@@ -99,7 +106,8 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
 
                 _addPlaylistState.value = AddPlaylistState.Success(playlist)
             } catch (e: Exception) {
-                _addPlaylistState.value = AddPlaylistState.Error(e.message ?: "Unknown error occurred")
+                _addPlaylistState.value =
+                    AddPlaylistState.Error(e.message ?: "Unknown error occurred")
             }
         }
     }
@@ -156,39 +164,45 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
                 // Check if API key is configured
                 val apiKey = YOUTUBE_API_KEY.getString()
                 if (apiKey.isBlank()) {
-                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("YouTube API key not configured. Please add one in Settings.")
+                    _channelPlaylistsState.value =
+                        ChannelPlaylistsState.Error("YouTube API key not configured. Please add one in Settings.")
                     return@launch
                 }
 
                 // Check if channel handle is configured
                 val handle = YOUTUBE_CHANNEL_HANDLE.getString()
                 if (handle.isBlank()) {
-                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("YouTube channel handle not configured. Please add one in Settings.")
+                    _channelPlaylistsState.value =
+                        ChannelPlaylistsState.Error("YouTube channel handle not configured. Please add one in Settings.")
                     return@launch
                 }
 
                 // Convert handle to channel ID
                 val channelId = YouTubeApiService.getChannelIdFromHandle(handle, apiKey)
                 if (channelId == null) {
-                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("Failed to find channel. Check your channel handle.")
+                    _channelPlaylistsState.value =
+                        ChannelPlaylistsState.Error("Failed to find channel. Check your channel handle.")
                     return@launch
                 }
 
                 // Fetch channel playlists
                 val playlists = YouTubeApiService.getChannelPlaylists(channelId, apiKey)
                 if (playlists == null) {
-                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("Failed to fetch playlists. Check your API key and internet connection.")
+                    _channelPlaylistsState.value =
+                        ChannelPlaylistsState.Error("Failed to fetch playlists. Check your API key and internet connection.")
                     return@launch
                 }
 
                 if (playlists.isEmpty()) {
-                    _channelPlaylistsState.value = ChannelPlaylistsState.Error("This channel has no public playlists.")
+                    _channelPlaylistsState.value =
+                        ChannelPlaylistsState.Error("This channel has no public playlists.")
                     return@launch
                 }
 
                 _channelPlaylistsState.value = ChannelPlaylistsState.Success(playlists)
             } catch (e: Exception) {
-                _channelPlaylistsState.value = ChannelPlaylistsState.Error(e.message ?: "Unknown error occurred")
+                _channelPlaylistsState.value =
+                    ChannelPlaylistsState.Error(e.message ?: "Unknown error occurred")
             }
         }
     }

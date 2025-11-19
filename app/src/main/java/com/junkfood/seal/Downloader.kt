@@ -18,7 +18,6 @@ import com.junkfood.seal.Downloader.getInfoAndDownload
 import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.COMMAND_DIRECTORY
-import com.junkfood.seal.util.CONVERT_WAV
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.Entries
@@ -642,14 +641,21 @@ object Downloader {
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "syncPlaylists: Failed to refresh metadata for ${playlist.title}", e)
+                        Log.e(
+                            TAG,
+                            "syncPlaylists: Failed to refresh metadata for ${playlist.title}",
+                            e
+                        )
                         // Continue with other playlists even if one fails
                     }
                 }
 
                 ToastUtil.makeToastSuspend("Playlist metadata refreshed")
             } else {
-                Log.w(TAG, "syncPlaylists: YouTube API key not configured, skipping metadata refresh")
+                Log.w(
+                    TAG,
+                    "syncPlaylists: YouTube API key not configured, skipping metadata refresh"
+                )
             }
 
             val preferences = DownloadUtil.DownloadPreferences(
@@ -731,8 +737,8 @@ object Downloader {
             val allowedExts = listOf("mp3", "m4a", "wav", "aac", "opus", "ogg", "webm")
             val existingFiles = audioDir.listFiles()?.filter { file ->
                 file.isFile &&
-                file.extension.lowercase() in allowedExts &&
-                !file.name.startsWith(".trashed-")  // Exclude trashed files
+                        file.extension.lowercase() in allowedExts &&
+                        !file.name.startsWith(".trashed-")  // Exclude trashed files
             } ?: emptyList()
 
             // Step 3: Extract video IDs from filenames and also collect normalized basenames

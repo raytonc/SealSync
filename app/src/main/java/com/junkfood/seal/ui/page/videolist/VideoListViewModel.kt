@@ -63,10 +63,10 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
             val files = if (audioDir.exists() && audioDir.isDirectory) {
                 audioDir.listFiles()?.filter { file ->
                     file.isFile &&
-                    file.extension.lowercase() in listOf(
+                            file.extension.lowercase() in listOf(
                         "mp3", "m4a", "aac", "opus", "ogg", "webm", "flac", "wav"
                     ) &&
-                    !file.name.startsWith(".trashed-")  // Exclude trashed files
+                            !file.name.startsWith(".trashed-")  // Exclude trashed files
                 }?.map { file ->
                     // Try to read metadata from .info.json file
                     val metadata = readMetadataFromJson(file)
@@ -75,7 +75,10 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
                     val thumbnailUrl = findThumbnailFile(file) ?: metadata?.thumbnail
 
                     Log.d(TAG, "File: ${file.name}")
-                    Log.d(TAG, "  Metadata: title=${metadata?.title}, uploader=${metadata?.uploader}")
+                    Log.d(
+                        TAG,
+                        "  Metadata: title=${metadata?.title}, uploader=${metadata?.uploader}"
+                    )
                     Log.d(TAG, "  Thumbnail: $thumbnailUrl")
 
                     AudioFileInfo(

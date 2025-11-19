@@ -9,7 +9,6 @@ import com.junkfood.seal.App.Companion.applicationScope
 import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.Downloader
 import com.junkfood.seal.Downloader.State
-import com.junkfood.seal.Downloader.manageDownloadError
 import com.junkfood.seal.Downloader.updatePlaylistResult
 import com.junkfood.seal.R
 import com.junkfood.seal.util.CUSTOM_COMMAND
