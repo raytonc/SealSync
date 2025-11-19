@@ -99,3 +99,20 @@
 # ===== App Data Classes =====
 -keep class com.junkfood.seal.util.YouTubeApiService$** { *; }
 -keep class com.junkfood.seal.util.Cookie { *; }
+
+# ===== Ignore Missing Optional Dependencies =====
+# Google Play Services (optional for Google API Client)
+-dontwarn com.google.android.gms.**
+
+# JNDI/LDAP (optional for Apache HTTP Client)
+-dontwarn javax.naming.**
+
+# Kerberos/JGSS (optional for Apache HTTP Client)
+-dontwarn org.ietf.jgss.**
+
+# GraalVM (optional for OkHttp native image)
+-dontwarn com.oracle.svm.**
+-dontwarn org.graalvm.nativeimage.**
+
+# Apache HTTP Client (already have dontwarn for some, add comprehensive)
+-dontwarn org.apache.http.**
