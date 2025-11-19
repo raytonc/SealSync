@@ -126,8 +126,15 @@ object NotificationUtil {
         notificationManager.cancel(notificationId)
         if (!PreferenceUtil.getValue(NOTIFICATION)) return
 
+        // Use SERVICE_CHANNEL_ID for service notifications, CHANNEL_ID for others
+        val channelId = if (notificationId == SERVICE_NOTIFICATION_ID) {
+            SERVICE_CHANNEL_ID
+        } else {
+            CHANNEL_ID
+        }
+
         val builder =
-            NotificationCompat.Builder(context, CHANNEL_ID)
+            NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(R.drawable.ic_stat_seal)
                 .setContentText(text)
                 .setOngoing(false)
@@ -168,18 +175,45 @@ object NotificationUtil {
         return serviceNotification
     }
 
-    fun updateServiceNotificationForPlaylist(index: Int, itemCount: Int) {
-        if (!::serviceNotification.isInitialized) {
-            Log.w(
-                TAG,
-                "updateServiceNotificationForPlaylist: serviceNotification not initialized, skipping update"
-            )
-            return
-        }
-        serviceNotification = NotificationCompat.Builder(context, serviceNotification)
-            .setContentTitle(context.getString(R.string.service_title) + " ($index/$itemCount)")
+    fun initializeServiceNotificationForPlaylist(itemCount: Int) {
+        serviceNotification = NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_seal)
+            .setContentTitle(context.getString(R.string.service_title) + " (0/$itemCount)")
+            .setOngoing(true)
+            .setForegroundServiceBehavior(FOREGROUND_SERVICE_IMMEDIATE)
             .build()
         notificationManager.notify(SERVICE_NOTIFICATION_ID, serviceNotification)
+    }
+
+    fun updateServiceNotificationForPlaylist(index: Int, itemCount: Int) {
+        serviceNotification = NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_seal)
+            .setContentTitle(context.getString(R.string.service_title) + " ($index/$itemCount)")
+            .setOngoing(true)
+            .setForegroundServiceBehavior(FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+        notificationManager.notify(SERVICE_NOTIFICATION_ID, serviceNotification)
+    }
+
+    fun finishPlaylistNotification(downloadedCount: Int, deletedCount: Int = 0) {
+        cancelNotification(SERVICE_NOTIFICATION_ID)
+        if (!PreferenceUtil.getValue(NOTIFICATION)) return
+
+        val text = if (deletedCount > 0) {
+            "Sync complete: $downloadedCount downloaded, $deletedCount deleted"
+        } else {
+            "Finished downloading ($downloadedCount/$downloadedCount)"
+        }
+
+        val notification = NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_seal)
+            .setContentTitle("Finished syncing")
+            .setContentText(text)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify(SERVICE_NOTIFICATION_ID, notification)
     }
 
     fun cancelNotification(notificationId: Int) {

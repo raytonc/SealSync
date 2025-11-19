@@ -496,9 +496,6 @@ object Downloader {
         Log.d(TAG, "downloadVideo: id=${videoInfo.id} " + videoInfo.title)
         Log.d(TAG, "notificationId: $notificationId")
 
-        NotificationUtil.notifyProgress(
-            notificationId = notificationId, title = videoInfo.title
-        )
         return DownloadUtil.downloadVideo(
             videoInfo = videoInfo,
             playlistUrl = playlistUrl,
@@ -510,12 +507,6 @@ object Downloader {
             mutableTaskState.update {
                 it.copy(progress = progress, progressText = line)
             }
-            NotificationUtil.notifyProgress(
-                notificationId = notificationId,
-                progress = progress.toInt(),
-                text = line,
-                title = videoInfo.title
-            )
         }.onFailure {
             manageDownloadError(
                 th = it,
@@ -527,21 +518,6 @@ object Downloader {
             )
         }.onSuccess {
             if (!isDownloadingPlaylist) finishProcessing()
-            val text =
-                context.getString(if (it.isEmpty()) R.string.status_completed else R.string.download_finish_notification)
-            FileUtil.createIntentForOpeningFile(it.firstOrNull()).run {
-                NotificationUtil.finishNotification(
-                    notificationId,
-                    title = videoInfo.title,
-                    text = text,
-                    intent = if (this != null) PendingIntent.getActivity(
-                        context,
-                        0,
-                        this,
-                        PendingIntent.FLAG_IMMUTABLE
-                    ) else null
-                )
-            }
         }
     }
 
@@ -558,6 +534,9 @@ object Downloader {
         mutableDownloaderState.update { State.DownloadingPlaylist() }
 
         currentJob = applicationScope.launch(Dispatchers.IO) {
+            // Initialize playlist notification with counter
+            NotificationUtil.initializeServiceNotificationForPlaylist(itemCount)
+
             for (i in indexList.indices) {
                 mutableDownloaderState.update {
                     if (it is State.DownloadingPlaylist)
@@ -608,6 +587,7 @@ object Downloader {
                     )
                 }
             }
+            NotificationUtil.finishPlaylistNotification(itemCount)
             finishProcessing()
         }
     }
@@ -750,7 +730,9 @@ object Downloader {
 
             val allowedExts = listOf("mp3", "m4a", "wav", "aac", "opus", "ogg", "webm")
             val existingFiles = audioDir.listFiles()?.filter { file ->
-                file.isFile && file.extension.lowercase() in allowedExts
+                file.isFile &&
+                file.extension.lowercase() in allowedExts &&
+                !file.name.startsWith(".trashed-")  // Exclude trashed files
             } ?: emptyList()
 
             // Step 3: Extract video IDs from filenames and also collect normalized basenames
@@ -812,6 +794,9 @@ object Downloader {
             val videosToDownload = playlistVideos.filterKeys { it !in matchedVideoIds }
             val downloadCount = videosToDownload.size
 
+            // Initialize playlist notification with counter
+            NotificationUtil.initializeServiceNotificationForPlaylist(downloadCount)
+
             Log.d(TAG, "syncPlaylists: Need to download $downloadCount videos")
 
             // Diagnostic logging to help debug false 'already synced' reports
@@ -840,13 +825,7 @@ object Downloader {
 
             if (downloadCount == 0) {
                 ToastUtil.makeToastSuspend("Folder is already synced")
-                // Clear any progress/service notifications and post a single final sync notification
-                NotificationUtil.cancelAllNotifications()
-                NotificationUtil.finishNotification(
-                    notificationId = NotificationUtil.SERVICE_NOTIFICATION_ID,
-                    title = "Finished syncing",
-                    text = "Sync complete: $downloadCount downloaded, ${filesToDelete.size} deleted"
-                )
+                NotificationUtil.finishPlaylistNotification(0, filesToDelete.size)
                 finishProcessing()
                 return@launch
             }
@@ -874,9 +853,8 @@ object Downloader {
                     "syncPlaylists: [${index + 1}/$downloadCount] Downloading video ID: $videoId"
                 )
 
-                // Fetch video info
+                // Fetch video info using playlist-items to get the specific video
                 val playlistItemParam = if (playlistIndex > 0) playlistIndex else 0
-                val playlistUrlParam = if (playlistIndex > 0) playlistUrl else ""
 
                 DownloadUtil.fetchVideoInfoFromUrl(
                     url = playlistUrl,
@@ -886,10 +864,12 @@ object Downloader {
                     if (downloaderState.value !is State.DownloadingPlaylist)
                         return@launch
 
+                    // Download as individual video (not via playlist) to avoid re-processing all items
+                    // Pass playlistIndex=0 and empty playlistUrl to trigger --no-playlist mode
                     downloadResultTemp = downloadVideo(
                         videoInfo = videoInfo,
-                        playlistIndex = playlistItemParam,
-                        playlistUrl = playlistUrlParam,
+                        playlistIndex = 0,
+                        playlistUrl = "",
                         preferences = preferences,
                     ).onFailure { th ->
                         manageDownloadError(
@@ -914,13 +894,7 @@ object Downloader {
 
             Log.d(TAG, "syncPlaylists: Sync complete")
             ToastUtil.makeToastSuspend("Sync complete: $downloadCount downloaded, ${filesToDelete.size} deleted")
-            // Replace multiple notifications with one final sync notification
-            NotificationUtil.cancelAllNotifications()
-            NotificationUtil.finishNotification(
-                notificationId = NotificationUtil.SERVICE_NOTIFICATION_ID,
-                title = "Finished syncing",
-                text = "Sync complete: $downloadCount downloaded, ${filesToDelete.size} deleted"
-            )
+            NotificationUtil.finishPlaylistNotification(downloadCount, filesToDelete.size)
             finishProcessing()
         }
     }

@@ -457,6 +457,10 @@ object DownloadUtil {
                 addOption("--convert-thumbnails", "jpg")
                 addOption("--write-info-json")  // Save metadata JSON file
                 addOption("--write-thumbnail")  // Save thumbnail as separate file
+                addOption("-P", "infojson:${context.cacheDir.absolutePath}")
+                addOption("-P", "pl_infojson:${context.cacheDir.absolutePath}")
+                addOption("-P", "thumbnail:${context.cacheDir.absolutePath}")
+                addOption("-P", "pl_thumbnail:${context.cacheDir.absolutePath}")
 
                 if (cropArtwork) {
                     val configFile = context.getConfigFile(id)
@@ -632,15 +636,14 @@ object DownloadUtil {
 
         Log.d(TAG, "onFinishDownloading: $fileName")
         if (sdcard) {
-            moveFilesToSdcard(
+            return moveFilesToSdcard(
                 sdcardUri = sdcardUri, tempPath = context.getSdcardTempDir(videoInfo.id)
-            ).onSuccess {
-                if (privateMode) {
-                    return Result.success(emptyList())
-                }
+            ).run {
+                if (privateMode) Result.success(emptyList())
+                else this
             }
         } else {
-            FileUtil.scanFileToMediaLibraryPostDownload(
+            return FileUtil.scanFileToMediaLibraryPostDownload(
                 title = fileName, downloadDir = downloadPath
             ).run {
                 if (privateMode) Result.success(emptyList())

@@ -62,10 +62,12 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
             val audioDir = File(App.audioDownloadDir)
             val files = if (audioDir.exists() && audioDir.isDirectory) {
                 audioDir.listFiles()?.filter { file ->
-                    file.isFile && file.extension.lowercase() in listOf(
+                    file.isFile &&
+                    file.extension.lowercase() in listOf(
                         "mp3", "m4a", "aac", "opus", "ogg", "webm", "flac", "wav"
-                    )
-                }?.sortedByDescending { it.lastModified() }?.map { file ->
+                    ) &&
+                    !file.name.startsWith(".trashed-")  // Exclude trashed files
+                }?.map { file ->
                     // Try to read metadata from .info.json file
                     val metadata = readMetadataFromJson(file)
 
@@ -85,7 +87,7 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
                         videoTitle = metadata?.title,
                         videoAuthor = metadata?.uploader ?: metadata?.channel
                     )
-                } ?: emptyList()
+                }?.sortedBy { it.videoTitle?.lowercase() ?: it.name.lowercase() } ?: emptyList()
             } else {
                 emptyList()
             }
@@ -116,12 +118,13 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
     private fun findThumbnailFile(audioFile: File): String? {
         return try {
             val baseName = audioFile.nameWithoutExtension
-            val parentDir = audioFile.parentFile ?: return null
+            // Thumbnails are saved to cacheDir, not with the audio files
+            val cacheDir = App.context.cacheDir
 
             // Look for thumbnail with various extensions
             val thumbnailExtensions = listOf("jpg", "jpeg", "png", "webp")
             for (ext in thumbnailExtensions) {
-                val thumbFile = File(parentDir, "$baseName.$ext")
+                val thumbFile = File(cacheDir, "$baseName.$ext")
                 if (thumbFile.exists()) {
                     // Return absolute path - Coil can load from file paths directly
                     return thumbFile.absolutePath
