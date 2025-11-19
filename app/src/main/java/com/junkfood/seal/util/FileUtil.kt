@@ -20,7 +20,7 @@ import java.io.File
 const val AUDIO_REGEX = "(mp3|aac|opus|m4a|wav)$"
 const val THUMBNAIL_REGEX = "\\.(jpg|png)$"
 const val SUBTITLE_REGEX = "\\.(lrc|vtt|srt|ass|json3|srv.|ttml)$"
-private const val PRIVATE_DIRECTORY_SUFFIX = ".Seal"
+private const val PRIVATE_DIRECTORY_SUFFIX = ".SealSync"
 
 object FileUtil {
     fun openFileFromResult(downloadResult: Result<List<String>>) {
@@ -204,7 +204,7 @@ object FileUtil {
 
     internal fun getExternalDownloadDirectory() = File(
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-        "Seal"
+        "SealSync"
     ).also { it.mkdir() }
 
     internal fun getExternalPrivateDownloadDirectory() = File(

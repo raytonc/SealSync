@@ -1,11 +1,11 @@
 <resources>
 
-    <style name="Theme.Seal" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.SealSync" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 
-    <style name="Theme.Seal.Dialog" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.SealSync.Dialog" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="windowNoTitle">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>
@@ -13,13 +13,13 @@
         <item name="android:windowContentOverlay">@null</item>
     </style>
 
-    <style name="Theme.Seal.Splashscreen" parent="Theme.SplashScreen">
-        <item name="postSplashScreenTheme">@style/Theme.Seal</item>
+    <style name="Theme.SealSync.Splashscreen" parent="Theme.SplashScreen">
+        <item name="postSplashScreenTheme">@style/Theme.SealSync</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
         <item name="windowSplashScreenIconBackgroundColor">@color/ic_launcher_background</item>
     </style>
 
-    <style name="Theme.Seal.TransparentActivity" parent="Theme.AppCompat.NoActionBar">
+    <style name="Theme.SealSync.TransparentActivity" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>

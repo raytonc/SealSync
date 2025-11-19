@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name" translatable="false">Seal</string>
+    <string name="app_name" translatable="false">SealSync</string>
     <string name="settings">Settings</string>
     <string name="download">Download</string>
     <string name="url_empty">The link cannot be empty</string>
@@ -49,7 +49,7 @@
     <string name="audio_directory">Audio folder</string>
     <string name="battery_configuration">Battery configuration</string>
     <string name="battery_configuration_desc">Ignore battery optimization for this app to download in the background</string>
-    <string name="service_title">Seal is downloading…</string>
+    <string name="service_title">SealSync is downloading…</string>
     <string name="downloading_indicator_text">Download in progress…</string>
     <string name="task_canceled">Download task canceled</string>
 

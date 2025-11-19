@@ -157,7 +157,7 @@ android {
             }
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            resValue("string", "app_name", "Seal Debug")
+            resValue("string", "app_name", "SealSync Debug")
         }
     }
 
@@ -179,7 +179,7 @@ android {
     applicationVariants.all {
         outputs.all {
             (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
-                "Seal-${defaultConfig.versionName}-${name}.apk"
+                "SealSync-${defaultConfig.versionName}-${name}.apk"
         }
     }
 

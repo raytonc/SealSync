@@ -16,6 +16,6 @@ dependencyResolutionManagement {
         maven ("https://jitpack.io")
     }
 }
-rootProject.name = "Seal"
+rootProject.name = "SealSync"
 include (":app")
 include(":color")
