@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude the Room database from backup to ensure fresh installs start with empty database -->
+    <exclude domain="database" path="app_database" />
+    <exclude domain="database" path="app_database-shm" />
+    <exclude domain="database" path="app_database-wal" />
+</full-backup-content>
