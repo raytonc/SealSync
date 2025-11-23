@@ -3,6 +3,7 @@ package com.junkfood.seal.util
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
@@ -16,11 +17,173 @@ import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.R
 import okhttp3.internal.closeQuietly
 import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 
 const val AUDIO_REGEX = "(mp3|aac|opus|m4a|wav)$"
 const val THUMBNAIL_REGEX = "\\.(jpg|png)$"
 const val SUBTITLE_REGEX = "\\.(lrc|vtt|srt|ass|json3|srv.|ttml)$"
 private const val PRIVATE_DIRECTORY_SUFFIX = ".SealSync"
+
+/**
+ * Data class to hold audio file information from DocumentFile scanning
+ */
+data class AudioFileData(
+    val uri: Uri,
+    val name: String,
+    val size: Long,
+    val lastModified: Long
+)
+
+/**
+ * Scans a directory tree using Storage Access Framework (DocumentFile)
+ * This works with scoped storage and doesn't require broad storage permissions
+ */
+fun scanAudioFilesWithDocumentFile(context: Context, treeUri: Uri): List<AudioFileData> {
+    val audioExtensions = setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
+    val files = mutableListOf<AudioFileData>()
+
+    val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
+    if (rootDoc == null) {
+        Log.e("FileUtil", "scanAudioFilesWithDocumentFile: Failed to create DocumentFile from URI: $treeUri")
+        return emptyList()
+    }
+
+    Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Starting scan of $treeUri")
+
+    fun scanRecursively(doc: DocumentFile) {
+        try {
+            doc.listFiles().forEach { file ->
+                when {
+                    file.isDirectory -> {
+                        Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Entering directory: ${file.name}")
+                        scanRecursively(file)
+                    }
+                    file.isFile -> {
+                        val name = file.name ?: return@forEach
+                        if (name.startsWith(".trashed-")) {
+                            return@forEach  // Skip trashed files
+                        }
+
+                        val ext = name.substringAfterLast('.', "").lowercase()
+
+                        if (ext in audioExtensions) {
+                            files.add(AudioFileData(
+                                uri = file.uri,
+                                name = name,
+                                size = file.length(),
+                                lastModified = file.lastModified()
+                            ))
+                            Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Found audio file: $name")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("FileUtil", "scanAudioFilesWithDocumentFile: Error scanning directory ${doc.name}", e)
+        }
+    }
+
+    scanRecursively(rootDoc)
+    Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Scan complete, found ${files.size} audio files")
+    return files
+}
+
+/**
+ * Extracts embedded thumbnail (album art) from an audio file using MediaMetadataRetriever
+ * Works with both file paths and content URIs (SAF)
+ */
+fun extractEmbeddedThumbnail(context: Context, uri: Uri): ByteArray? {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, uri)
+        val thumbnail = retriever.embeddedPicture
+        Log.d("FileUtil", "extractEmbeddedThumbnail: ${if (thumbnail != null) "Found" else "No"} embedded thumbnail for $uri")
+        thumbnail
+    } catch (e: Exception) {
+        Log.e("FileUtil", "extractEmbeddedThumbnail: Failed to extract thumbnail from $uri", e)
+        null
+    } finally {
+        try {
+            retriever.release()
+        } catch (e: Exception) {
+            Log.e("FileUtil", "extractEmbeddedThumbnail: Failed to release retriever", e)
+        }
+    }
+}
+
+/**
+ * Caches an embedded thumbnail to app's files directory and returns the file path
+ * Uses MD5 hash of URI as filename to avoid conflicts
+ */
+fun cacheEmbeddedThumbnail(context: Context, uri: Uri, thumbnailBytes: ByteArray): String? {
+    return try {
+        // Create thumbnails directory in app's files directory
+        val thumbnailsDir = File(context.filesDir, "thumbnails")
+        if (!thumbnailsDir.exists()) {
+            thumbnailsDir.mkdirs()
+        }
+
+        // Generate unique filename from URI hash
+        val md5 = MessageDigest.getInstance("MD5")
+        val hash = md5.digest(uri.toString().toByteArray())
+        val hashString = hash.joinToString("") { "%02x".format(it) }
+        val thumbnailFile = File(thumbnailsDir, "$hashString.jpg")
+
+        // Write thumbnail to file if it doesn't exist
+        if (!thumbnailFile.exists()) {
+            FileOutputStream(thumbnailFile).use { output ->
+                output.write(thumbnailBytes)
+            }
+            Log.d("FileUtil", "cacheEmbeddedThumbnail: Cached thumbnail to ${thumbnailFile.absolutePath}")
+        } else {
+            Log.d("FileUtil", "cacheEmbeddedThumbnail: Thumbnail already cached at ${thumbnailFile.absolutePath}")
+        }
+
+        thumbnailFile.absolutePath
+    } catch (e: Exception) {
+        Log.e("FileUtil", "cacheEmbeddedThumbnail: Failed to cache thumbnail for $uri", e)
+        null
+    }
+}
+
+/**
+ * Checks if a cached thumbnail exists for the given URI without extracting
+ * Returns the file path if cached, null otherwise
+ * This is a fast path that avoids expensive extraction operations
+ */
+fun getCachedThumbnailPath(context: Context, uri: Uri): String? {
+    return try {
+        val thumbnailsDir = File(context.filesDir, "thumbnails")
+        if (!thumbnailsDir.exists()) {
+            return null
+        }
+
+        // Generate the same filename that would be used for caching
+        val md5 = MessageDigest.getInstance("MD5")
+        val hash = md5.digest(uri.toString().toByteArray())
+        val hashString = hash.joinToString("") { "%02x".format(it) }
+        val thumbnailFile = File(thumbnailsDir, "$hashString.jpg")
+
+        if (thumbnailFile.exists()) {
+            thumbnailFile.absolutePath
+        } else {
+            null
+        }
+    } catch (e: Exception) {
+        Log.e("FileUtil", "getCachedThumbnailPath: Failed to check cache for $uri", e)
+        null
+    }
+}
+
+/**
+ * Extracts and caches embedded thumbnail from audio file, returns cached file path
+ * This is a convenience function combining extraction and caching
+ */
+fun getEmbeddedThumbnailPath(context: Context, uri: Uri): String? {
+    val thumbnailBytes = extractEmbeddedThumbnail(context, uri) ?: return null
+    return cacheEmbeddedThumbnail(context, uri, thumbnailBytes)
+}
 
 object FileUtil {
     fun openFileFromResult(downloadResult: Result<List<String>>) {
@@ -225,13 +388,21 @@ object FileUtil {
 
     fun getRealPath(treeUri: Uri): String {
         val path: String = treeUri.path.toString()
-        Log.d(TAG, path)
+        Log.d(TAG, "getRealPath: Input URI: $treeUri")
+        Log.d(TAG, "getRealPath: URI path: $path")
+
         if (!path.contains("primary:")) {
-            ToastUtil.makeToast("This directory is not supported")
-            return getExternalDownloadDirectory().absolutePath
+            val fallback = getExternalDownloadDirectory().absolutePath
+            Log.e(TAG, "getRealPath: URI does not contain 'primary:', falling back to: $fallback")
+            ToastUtil.makeToast("This directory is not supported. Using default directory.")
+            return fallback
         }
+
         val last: String = path.split("primary:").last()
-        return Environment.getExternalStorageDirectory().absolutePath + "/$last"
+        val realPath = Environment.getExternalStorageDirectory().absolutePath + "/$last"
+        Log.d(TAG, "getRealPath: Converted to real path: $realPath")
+
+        return realPath
     }
 
 

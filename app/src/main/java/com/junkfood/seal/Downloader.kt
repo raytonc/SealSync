@@ -1,8 +1,10 @@
 package com.junkfood.seal
 
 import android.app.PendingIntent
+import android.net.Uri
 import android.util.Log
 import androidx.annotation.CheckResult
+import androidx.documentfile.provider.DocumentFile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.platform.ClipboardManager
@@ -17,11 +19,14 @@ import com.junkfood.seal.Downloader.downloadVideoWithConfigurations
 import com.junkfood.seal.Downloader.getInfoAndDownload
 import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.PlaylistEntry
+import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
+import com.junkfood.seal.util.AudioFileData
 import com.junkfood.seal.util.COMMAND_DIRECTORY
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.Entries
 import com.junkfood.seal.util.FileUtil
+import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
 import com.junkfood.seal.util.Format
 import com.junkfood.seal.util.NotificationUtil
 import com.junkfood.seal.util.PlaylistResult
@@ -506,6 +511,17 @@ object Downloader {
             mutableTaskState.update {
                 it.copy(progress = progress, progressText = line)
             }
+            // Only show individual progress notifications for single downloads
+            // Playlist/sync operations use the service notification counter instead
+            if (downloaderState.value !is State.DownloadingPlaylist) {
+                NotificationUtil.notifyProgress(
+                    notificationId = notificationId,
+                    progress = progress.toInt(),
+                    text = line,
+                    title = videoInfo.title,
+                    taskId = taskId
+                )
+            }
         }.onFailure {
             manageDownloadError(
                 th = it,
@@ -674,6 +690,7 @@ object Downloader {
                 mutableMapOf<String, Pair<String, Int>>() // videoId -> (playlistUrl, index)
             val titleToIdTemp = mutableMapOf<String, String>() // normalizedTitle -> videoId
             var totalVideos = 0
+            var playlistFetchFailures = 0
 
             for (playlistEntry in playlists) {
                 DownloadUtil.getPlaylistOrVideoInfo(
@@ -703,11 +720,19 @@ object Downloader {
                         }
                     }
                 }.onFailure { th ->
+                    playlistFetchFailures++
                     Log.e(
                         TAG,
                         "syncPlaylists: Failed to fetch playlist '${playlistEntry.title}': ${th.message}"
                     )
                 }
+            }
+
+            // Abort if any playlist failed to fetch to prevent data loss
+            if (playlistFetchFailures > 0) {
+                ToastUtil.makeToastSuspend("Failed to fetch $playlistFetchFailures playlist(s). Sync aborted to prevent data loss.")
+                finishProcessing()
+                return@launch
             }
 
             Log.d(
@@ -716,44 +741,75 @@ object Downloader {
             )
 
             // Step 2: Scan audio directory for existing files
-            val audioDir = File(App.audioDownloadDir)
-            if (!audioDir.exists()) {
-                audioDir.mkdirs()
-            }
-
-            // Clean up old playlist metadata files to avoid MediaStore conflicts
-            try {
-                audioDir.listFiles()?.forEach { file ->
-                    // Delete playlist-level metadata files (contains playlist ID in brackets)
-                    if (file.name.matches(Regex(".*\\[PL[a-zA-Z0-9_-]+\\]\\.(info\\.json|jpg|jpeg|png|webp).*"))) {
-                        file.delete()
-                        Log.d(TAG, "syncPlaylists: Cleaned up old playlist metadata: ${file.name}")
-                    }
+            val uriString = AUDIO_DIRECTORY_URI.getString()
+            val existingFiles: List<AudioFileData> = if (uriString.isNotEmpty()) {
+                // Use SAF (Storage Access Framework) for scoped storage compatibility
+                try {
+                    val treeUri = Uri.parse(uriString)
+                    Log.d(TAG, "syncPlaylists: Scanning using SAF with URI: $treeUri")
+                    scanAudioFilesWithDocumentFile(context, treeUri)
+                        .filter { !it.name.startsWith(".trashed-") }
+                        .also {
+                            Log.d(TAG, "syncPlaylists: Found ${it.size} existing audio files via SAF")
+                        }
+                } catch (e: Exception) {
+                    Log.e(TAG, "syncPlaylists: Failed to scan audio folder", e)
+                    ToastUtil.makeToastSuspend("Failed to scan audio folder: ${e.message}")
+                    finishProcessing()
+                    return@launch
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "syncPlaylists: Failed to clean up old metadata files", e)
-            }
+            } else {
+                // Fallback to File API for legacy paths (non-SAF)
+                Log.w(TAG, "syncPlaylists: No SAF URI set, using File API (may not work with scoped storage)")
+                val audioDir = File(App.audioDownloadDir)
+                if (!audioDir.exists()) {
+                    audioDir.mkdirs()
+                }
 
-            val allowedExts = listOf("mp3", "m4a", "wav", "aac", "opus", "ogg", "webm")
-            val existingFiles = audioDir.listFiles()?.filter { file ->
-                file.isFile &&
-                        file.extension.lowercase() in allowedExts &&
-                        !file.name.startsWith(".trashed-")  // Exclude trashed files
-            } ?: emptyList()
+                // Clean up old playlist metadata files to avoid MediaStore conflicts
+                try {
+                    audioDir.listFiles()?.forEach { file ->
+                        // Delete playlist-level metadata files (contains playlist ID in brackets)
+                        if (file.name.matches(Regex(".*\\[PL[a-zA-Z0-9_-]+\\]\\.(info\\.json|jpg|jpeg|png|webp).*"))) {
+                            file.delete()
+                            Log.d(TAG, "syncPlaylists: Cleaned up old playlist metadata: ${file.name}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "syncPlaylists: Failed to clean up old metadata files", e)
+                }
+
+                val allowedExts = listOf("mp3", "m4a", "wav", "aac", "opus", "ogg", "oga", "webm", "flac")
+                audioDir.walkTopDown()
+                    .filter { file ->
+                        file.isFile &&
+                                file.extension.lowercase() in allowedExts &&
+                                !file.name.startsWith(".trashed-")
+                    }
+                    .map { file ->
+                        AudioFileData(
+                            uri = Uri.fromFile(file),
+                            name = file.name,
+                            size = file.length(),
+                            lastModified = file.lastModified()
+                        )
+                    }
+                    .toList()
+            }
 
             // Step 3: Extract video IDs from filenames and also collect normalized basenames
             val fileVideoIdMap =
-                mutableMapOf<String, File>() // videoId -> File (only when an ID bracket is present)
+                mutableMapOf<String, AudioFileData>() // videoId -> AudioFileData (only when an ID bracket is present)
             val fileBasenameSet = mutableSetOf<String>() // normalized basenames for title matching
             // accept a wider range of ID lengths to support other extractors, but keep it conservative
             val videoIdPattern = Regex("\\[([a-zA-Z0-9_-]{6,50})\\]")
 
-            existingFiles.forEach { file ->
-                val nameNoExt = file.name.substringBeforeLast('.')
+            existingFiles.forEach { fileData ->
+                val nameNoExt = fileData.name.substringBeforeLast('.')
                 fileBasenameSet.add(normalizeName(nameNoExt))
-                val match = videoIdPattern.find(file.name)
+                val match = videoIdPattern.find(fileData.name)
                 match?.groupValues?.get(1)?.let { videoId ->
-                    fileVideoIdMap[videoId] = file
+                    fileVideoIdMap[videoId] = fileData
                 }
             }
 
@@ -780,15 +836,27 @@ object Downloader {
                 }
             }
 
+            // Safety check: Ensure we have playlist data before deleting anything
+            if (playlistVideos.isEmpty()) {
+                Log.e(TAG, "syncPlaylists: ABORT - No playlist videos fetched!")
+                ToastUtil.makeToastSuspend("Sync aborted: No playlist data available")
+                finishProcessing()
+                return@launch
+            }
+
             // Step 5: Delete files that have bracketed IDs but are not present in any playlist
             val filesToDelete = fileVideoIdMap.filterKeys { it !in playlistVideos.keys }
-            filesToDelete.forEach { (videoId, file) ->
+            filesToDelete.forEach { (videoId, fileData) ->
                 try {
-                    if (file.delete()) {
-                        Log.d(TAG, "syncPlaylists: Deleted ${file.name} (ID: $videoId)")
+                    // Use DocumentFile for SAF-compatible deletion
+                    val docFile = DocumentFile.fromSingleUri(context, fileData.uri)
+                    if (docFile?.delete() == true) {
+                        Log.d(TAG, "syncPlaylists: Deleted ${fileData.name} (ID: $videoId)")
+                    } else {
+                        Log.w(TAG, "syncPlaylists: Failed to delete ${fileData.name} (ID: $videoId)")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "syncPlaylists: Failed to delete ${file.name}", e)
+                    Log.e(TAG, "syncPlaylists: Failed to delete ${fileData.name}", e)
                 }
             }
 
@@ -799,9 +867,6 @@ object Downloader {
             // Step 6: Download videos not in folder (considered present if matched by id or title)
             val videosToDownload = playlistVideos.filterKeys { it !in matchedVideoIds }
             val downloadCount = videosToDownload.size
-
-            // Initialize playlist notification with counter
-            NotificationUtil.initializeServiceNotificationForPlaylist(downloadCount)
 
             Log.d(TAG, "syncPlaylists: Need to download $downloadCount videos")
 
@@ -829,12 +894,16 @@ object Downloader {
                 )
             }
 
+            // Check if already synced BEFORE creating notification
             if (downloadCount == 0) {
                 ToastUtil.makeToastSuspend("Folder is already synced")
-                NotificationUtil.finishPlaylistNotification(0, filesToDelete.size)
+                // No notification when already synced
                 finishProcessing()
                 return@launch
             }
+
+            // Initialize playlist notification with counter (only when there's work to do)
+            NotificationUtil.initializeServiceNotificationForPlaylist(downloadCount)
 
             videosToDownload.entries.forEachIndexed { index, (videoId, urlAndIndex) ->
                 if (downloaderState.value !is State.DownloadingPlaylist) {

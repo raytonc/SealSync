@@ -19,26 +19,18 @@ class DownloadService : Service() {
 
 
     override fun onBind(intent: Intent): IBinder {
-        val pendingIntent: PendingIntent =
-            Intent(this, MainActivity::class.java).let { notificationIntent ->
-                PendingIntent.getActivity(
-                    this, 0, notificationIntent,
-                    PendingIntent.FLAG_IMMUTABLE
-                )
-            }
-        val notification = NotificationUtil.makeServiceNotification(pendingIntent)
-        startForeground(SERVICE_NOTIFICATION_ID, notification)
+        // Don't create notification here - it will be created when actual work starts
+        // in initializeServiceNotificationForPlaylist()
         return DownloadServiceBinder()
     }
 
+    fun startForegroundWithNotification(notification: android.app.Notification) {
+        startForeground(SERVICE_NOTIFICATION_ID, notification)
+    }
 
     override fun onUnbind(intent: Intent?): Boolean {
         Log.d(TAG, "onUnbind: ")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            stopForeground(true)
-        }
+        // stopForeground is now called from finishPlaylistNotification to ensure proper timing
         stopSelf()
         return super.onUnbind(intent)
     }

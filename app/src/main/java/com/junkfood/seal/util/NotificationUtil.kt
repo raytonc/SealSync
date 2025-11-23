@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -13,6 +14,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE
+import com.junkfood.seal.App
 import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.NotificationActionReceiver
 import com.junkfood.seal.NotificationActionReceiver.Companion.ACTION_CANCEL_TASK
@@ -36,6 +38,7 @@ object NotificationUtil {
     private const val NOTIFICATION_GROUP_ID = "seal.download.notification"
     private const val DEFAULT_NOTIFICATION_ID = 100
     const val SERVICE_NOTIFICATION_ID = 123
+    private const val COMPLETION_NOTIFICATION_ID = SERVICE_NOTIFICATION_ID + 1  // 124
     private lateinit var serviceNotification: Notification
 
     // Throttling for progress notifications
@@ -178,11 +181,14 @@ object NotificationUtil {
     fun initializeServiceNotificationForPlaylist(itemCount: Int) {
         serviceNotification = NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_seal)
-            .setContentTitle(context.getString(R.string.service_title) + " (0/$itemCount)")
+            .setContentTitle(context.getString(R.string.service_title) + " (1/$itemCount)")
             .setOngoing(true)
             .setForegroundServiceBehavior(FOREGROUND_SERVICE_IMMEDIATE)
             .build()
         notificationManager.notify(SERVICE_NOTIFICATION_ID, serviceNotification)
+
+        // Start the service as foreground when actual work begins
+        App.downloadService?.startForegroundWithNotification(serviceNotification)
     }
 
     fun updateServiceNotificationForPlaylist(index: Int, itemCount: Int) {
@@ -196,24 +202,8 @@ object NotificationUtil {
     }
 
     fun finishPlaylistNotification(downloadedCount: Int, deletedCount: Int = 0) {
-        cancelNotification(SERVICE_NOTIFICATION_ID)
-        if (!PreferenceUtil.getValue(NOTIFICATION)) return
-
-        val text = if (deletedCount > 0) {
-            "Sync complete: $downloadedCount downloaded, $deletedCount deleted"
-        } else {
-            "Finished downloading ($downloadedCount/$downloadedCount)"
-        }
-
-        val notification = NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_seal)
-            .setContentTitle("Finished syncing")
-            .setContentText(text)
-            .setOngoing(false)
-            .setAutoCancel(true)
-            .build()
-
-        notificationManager.notify(SERVICE_NOTIFICATION_ID, notification)
+        // Remove foreground service notification - the ONLY way to remove it in Android
+        App.downloadService?.stopForeground(Service.STOP_FOREGROUND_REMOVE)
     }
 
     fun cancelNotification(notificationId: Int) {

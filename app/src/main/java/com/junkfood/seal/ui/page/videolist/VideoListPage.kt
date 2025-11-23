@@ -1,7 +1,12 @@
 package com.junkfood.seal.ui.page.videolist
 
 import VideoStreamSVG
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -28,6 +33,7 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.junkfood.seal.App
 import com.junkfood.seal.R
+import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.ui.common.AsyncImageImpl
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.common.SVGImage
@@ -59,7 +67,9 @@ import com.junkfood.seal.ui.component.ConfirmButton
 import com.junkfood.seal.ui.component.DismissButton
 import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.ui.component.SealDialog
+import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.FileUtil
+import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.toFileSizeText
 import java.text.SimpleDateFormat
@@ -73,6 +83,33 @@ fun VideoListPage(
     onNavigateBack: () -> Unit
 ) {
     val audioFiles by viewModel.audioFilesFlow.collectAsStateWithLifecycle()
+    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+
+    // Check if audio directory URI is set
+    var showFolderSelectionDialog by remember { mutableStateOf(AUDIO_DIRECTORY_URI.getString().isEmpty()) }
+
+    // Directory picker launcher
+    val dirLauncher =
+        rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
+            override fun createIntent(context: Context, input: Uri?): Intent {
+                return (super.createIntent(context, input)).apply {
+                    flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                }
+            }
+        }) { uri: Uri? ->
+            uri?.let {
+                App.updateDownloadDir(it, Directory.AUDIO)
+                showFolderSelectionDialog = false
+                viewModel.refreshFileList()
+            }
+        }
+
+    // Rescan every time page is shown
+    LaunchedEffect(Unit) {
+        viewModel.refreshFileList()
+    }
 
     val scrollBehavior = if (audioFiles.isNotEmpty()) {
         TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
@@ -157,7 +194,26 @@ fun VideoListPage(
             }
         }
     ) { paddingValues ->
-        if (audioFiles.isEmpty()) {
+        if (isLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Scanning audio files...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else if (audioFiles.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -184,7 +240,7 @@ fun VideoListPage(
                     .padding(paddingValues)
                     .padding(horizontal = 16.dp)
             ) {
-                items(audioFiles, key = { it.file.absolutePath }) { fileInfo ->
+                items(audioFiles, key = { it.uri?.toString() ?: it.file?.absolutePath ?: it.name }) { fileInfo ->
                     AudioFileItem(
                         fileInfo = fileInfo,
                         isSelectEnabled = isSelectEnabled,
@@ -204,7 +260,14 @@ fun VideoListPage(
                                     selectedFiles.add(fileInfo)
                                 }
                             } else {
-                                FileUtil.openFile(path = fileInfo.file.absolutePath) {
+                                // Open file using URI or file path
+                                val path = fileInfo.uri?.let { FileUtil.getRealPath(it) }
+                                    ?: fileInfo.file?.absolutePath
+                                if (path != null) {
+                                    FileUtil.openFile(path = path) {
+                                        ToastUtil.makeToastSuspend(App.context.getString(R.string.file_unavailable))
+                                    }
+                                } else {
                                     ToastUtil.makeToastSuspend(App.context.getString(R.string.file_unavailable))
                                 }
                             }
@@ -249,7 +312,7 @@ fun VideoListPage(
     }
 
     if (showDeleteMultipleDialog) {
-        val totalSize = selectedFiles.sumOf { it.file.length() }
+        val totalSize = selectedFiles.sumOf { it.size }
         SealDialog(
             onDismissRequest = { showDeleteMultipleDialog = false },
             icon = { Icon(Icons.Outlined.DeleteSweep, null) },
@@ -268,6 +331,32 @@ fun VideoListPage(
             dismissButton = {
                 DismissButton {
                     showDeleteMultipleDialog = false
+                }
+            }
+        )
+    }
+
+    if (showFolderSelectionDialog) {
+        SealDialog(
+            onDismissRequest = { /* Don't allow dismiss - folder selection is required */ },
+            title = { Text("Select Audio Folder") },
+            text = {
+                Column {
+                    Text(
+                        text = "Please select the folder where your audio files are stored.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "This is required for the app to detect and manage your audio files properly.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                ConfirmButton(text = "Select Folder") {
+                    dirLauncher.launch(null)
                 }
             }
         )
@@ -336,7 +425,7 @@ fun AudioFileItem(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = fileInfo.file.length().toFileSizeText(),
+                        text = fileInfo.size.toFileSizeText(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

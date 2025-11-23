@@ -13,10 +13,16 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.content.getSystemService
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import com.google.android.material.color.DynamicColors
+import com.junkfood.seal.ui.common.AudioThumbnailFetcher
+import com.junkfood.seal.ui.common.AudioThumbnailKeyer
 import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.AUDIO_DIRECTORY
+import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.COMMAND_DIRECTORY
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.FileUtil
@@ -44,7 +50,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 @HiltAndroidApp
-class App : Application() {
+class App : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         MMKV.initialize(this)
@@ -103,6 +109,21 @@ class App : Application() {
             })
     }
 
+    /**
+     * Configure Coil ImageLoader with custom fetcher for audio thumbnails
+     * This enables lazy loading of embedded thumbnails from audio files
+     */
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .components {
+                // Add custom keyer for audio URIs
+                add(AudioThumbnailKeyer())
+                // Add custom fetcher for extracting embedded thumbnails
+                add(AudioThumbnailFetcher.Factory())
+            }
+            .build()
+    }
+
     companion object {
         lateinit var clipboard: ClipboardManager
         lateinit var videoDownloadDir: String
@@ -112,16 +133,18 @@ class App : Application() {
         lateinit var packageInfo: PackageInfo
 
         var isServiceRunning = false
+        var downloadService: DownloadService? = null
 
         private val connection = object : ServiceConnection {
             override fun onServiceConnected(className: ComponentName, service: IBinder) {
-                // binder intentionally not needed here; just mark service running
                 @Suppress("UNCHECKED_CAST")
-                service as DownloadService.DownloadServiceBinder
+                val binder = service as DownloadService.DownloadServiceBinder
+                downloadService = binder.getService()
                 isServiceRunning = true
             }
 
             override fun onServiceDisconnected(arg0: ComponentName) {
+                downloadService = null
             }
         }
 
@@ -154,12 +177,33 @@ class App : Application() {
         fun updateDownloadDir(uri: Uri, directoryType: Directory) {
             when (directoryType) {
                 Directory.AUDIO -> {
+                    Log.d(TAG, "updateDownloadDir: Received URI: $uri")
+
+                    // Persist URI permission so we can access it later
+                    try {
+                        context.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                        Log.d(TAG, "updateDownloadDir: Successfully persisted URI permission")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "updateDownloadDir: Failed to persist URI permission", e)
+                    }
+
+                    // Store the URI (primary method for SAF)
+                    PreferenceUtil.encodeString(AUDIO_DIRECTORY_URI, uri.toString())
+                    Log.d(TAG, "updateDownloadDir: Stored URI: $uri")
+
+                    // Also store the path (for display purposes and legacy compatibility)
                     val path = FileUtil.getRealPath(uri)
+                    Log.d(TAG, "updateDownloadDir: Converted path: $path")
                     audioDownloadDir = path
                     PreferenceUtil.encodeString(AUDIO_DIRECTORY, path)
                 }
             }
         }
+
+        private const val TAG = "App"
 
         fun getVersionReport(): String {
             val versionName = packageInfo.versionName
