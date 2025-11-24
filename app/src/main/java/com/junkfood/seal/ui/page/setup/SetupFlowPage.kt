@@ -1,10 +1,15 @@
 package com.junkfood.seal.ui.page.setup
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -13,10 +18,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Battery6Bar
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -31,12 +39,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.App
 import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
+import com.junkfood.seal.util.NOTIFICATION
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
@@ -44,15 +54,45 @@ import com.junkfood.seal.util.PreferenceUtil.updateString
 import com.junkfood.seal.util.SETUP_COMPLETED
 import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
 
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun SetupFlowPage(
     onSetupComplete: () -> Unit
 ) {
+    val context = LocalContext.current
     var currentStep by remember { mutableIntStateOf(0) }
     var apiKey by remember { mutableStateOf("") }
     var channelHandle by remember { mutableStateOf("") }
     var folderSelected by remember { mutableStateOf(false) }
+
+    // Notification permission (Android 13+)
+    val notificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        rememberPermissionState(permission = Manifest.permission.POST_NOTIFICATIONS)
+    } else null
+
+    // Battery optimization
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    var batteryOptimizationGranted by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            } else {
+                true // Not needed on older versions
+            }
+        )
+    }
+
+    val batteryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            batteryOptimizationGranted = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        }
+    }
 
     val dirLauncher = rememberLauncherForActivityResult(
         object : ActivityResultContracts.OpenDocumentTree() {
@@ -98,8 +138,34 @@ fun SetupFlowPage(
                 3 -> ChannelHandleStep(
                     channelHandle = channelHandle,
                     onChannelHandleChange = { channelHandle = it },
-                    onComplete = {
+                    onNext = {
                         YOUTUBE_CHANNEL_HANDLE.updateString(channelHandle)
+                        currentStep = 4
+                    }
+                )
+                4 -> NotificationPermissionStep(
+                    notificationPermission = notificationPermission,
+                    onNext = { currentStep = 5 },
+                    onSkip = {
+                        NOTIFICATION.updateBoolean(false)
+                        currentStep = 5
+                    }
+                )
+                5 -> BatteryOptimizationStep(
+                    batteryOptimizationGranted = batteryOptimizationGranted,
+                    onRequestPermission = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            batteryLauncher.launch(intent)
+                        }
+                    },
+                    onComplete = {
+                        SETUP_COMPLETED.updateBoolean(true)
+                        onSetupComplete()
+                    },
+                    onSkip = {
                         SETUP_COMPLETED.updateBoolean(true)
                         onSetupComplete()
                     }
@@ -151,6 +217,16 @@ private fun WelcomeStep(onNext: () -> Unit) {
                 )
                 Text(
                     text = "• YouTube channel handle",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "• Notification permissions",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "• Battery optimization settings",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
@@ -289,7 +365,7 @@ private fun ApiKeyStep(
 private fun ChannelHandleStep(
     channelHandle: String,
     onChannelHandleChange: (String) -> Unit,
-    onComplete: () -> Unit
+    onNext: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -332,11 +408,168 @@ private fun ChannelHandleStep(
             )
             Spacer(modifier = Modifier.height(24.dp))
             Button(
-                onClick = onComplete,
+                onClick = onNext,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = channelHandle.isNotBlank()
             ) {
-                Text("Complete Setup")
+                Text("Continue")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalPermissionsApi::class)
+@Composable
+private fun NotificationPermissionStep(
+    notificationPermission: com.google.accompanist.permissions.PermissionState?,
+    onNext: () -> Unit,
+    onSkip: () -> Unit
+) {
+    val isAndroid13Plus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val permissionGranted = notificationPermission?.status?.isGranted ?: true
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Notifications,
+                contentDescription = null,
+                modifier = Modifier.padding(16.dp),
+                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Text(
+                text = "Enable Notifications",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = if (isAndroid13Plus) {
+                    "SealSync needs your permission to send notifications about download status and progress."
+                } else {
+                    "Notifications are enabled by default on this Android version."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (isAndroid13Plus && !permissionGranted) {
+                Button(
+                    onClick = { notificationPermission?.launchPermissionRequest() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Grant Permission")
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onSkip,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Skip")
+                }
+            } else {
+                if (isAndroid13Plus) {
+                    Text(
+                        text = "✓ Permission granted",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                Button(
+                    onClick = onNext,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Continue")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatteryOptimizationStep(
+    batteryOptimizationGranted: Boolean,
+    onRequestPermission: () -> Unit,
+    onComplete: () -> Unit,
+    onSkip: () -> Unit
+) {
+    val isAndroid6Plus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Battery6Bar,
+                contentDescription = null,
+                modifier = Modifier.padding(16.dp),
+                tint = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            Text(
+                text = "Battery Optimization",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = if (isAndroid6Plus) {
+                    "For best performance, allow SealSync to run in the background. This ensures your downloads continue even when the app is minimized."
+                } else {
+                    "Background running is enabled by default on this Android version."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (isAndroid6Plus && !batteryOptimizationGranted) {
+                Button(
+                    onClick = onRequestPermission,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Configure Settings")
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onSkip,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Skip")
+                }
+            } else {
+                if (isAndroid6Plus) {
+                    Text(
+                        text = "✓ Battery optimization disabled",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                Button(
+                    onClick = onComplete,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Complete Setup")
+                }
             }
         }
     }

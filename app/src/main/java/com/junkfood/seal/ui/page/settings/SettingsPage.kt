@@ -74,40 +74,6 @@ fun SettingsPage(
     onNavigateBack: () -> Unit, onNavigateTo: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-    var showBatteryHint by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                !pm.isIgnoringBatteryOptimizations(context.packageName)
-            } else {
-                false
-            }
-        )
-    }
-    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-            data = Uri.parse("package:${context.packageName}")
-        }
-    } else {
-        Intent()
-    }
-    val isActivityAvailable: Boolean = if (Build.VERSION.SDK_INT < 23) false
-    else if (Build.VERSION.SDK_INT < 33) context.packageManager.queryIntentActivities(
-        intent,
-        PackageManager.MATCH_ALL
-    ).isNotEmpty()
-    else context.packageManager.queryIntentActivities(
-        intent,
-        PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY.toLong())
-    ).isNotEmpty()
-
-
-    val launcher =
-        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                showBatteryHint = !pm.isIgnoringBatteryOptimizations(context.packageName)
-            }
-        }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     val uriHandler = LocalUriHandler.current
@@ -165,25 +131,6 @@ fun SettingsPage(
         ) {
             item {
                 SettingTitle(text = stringResource(id = R.string.settings))
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-            ) {
-                item {
-                    AnimatedVisibility(
-                        visible = showBatteryHint && isActivityAvailable,
-                        exit = shrinkVertically() + fadeOut()
-                    ) {
-                        PreferencesHintCard(
-                            title = stringResource(R.string.battery_configuration),
-                            icon = Icons.Rounded.EnergySavingsLeaf,
-                            description = stringResource(R.string.battery_configuration_desc),
-                        ) {
-                            launcher.launch(intent)
-                            showBatteryHint =
-                                !pm.isIgnoringBatteryOptimizations(context.packageName)
-                        }
-                    }
-                }
             }
             // Inline general settings (no category subtitles)
             item {

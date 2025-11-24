@@ -110,16 +110,6 @@ fun DownloadPage(
     val addPlaylistState by playlistViewModel.addPlaylistState.collectAsStateWithLifecycle()
     val channelPlaylistsState by playlistViewModel.channelPlaylistsState.collectAsStateWithLifecycle()
 
-    var showNotificationDialog by remember { mutableStateOf(false) }
-    val notificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        rememberPermissionState(permission = Manifest.permission.POST_NOTIFICATIONS) { isGranted: Boolean ->
-            showNotificationDialog = false
-            if (!isGranted) {
-                ToastUtil.makeToast(R.string.permission_denied)
-            }
-        }
-    } else null
-
     var showAddPlaylistDialog by rememberSaveable { mutableStateOf(false) }
     var showChannelPlaylistsDialog by rememberSaveable { mutableStateOf(false) }
     var showMeteredNetworkDialog by remember { mutableStateOf(false) }
@@ -159,23 +149,7 @@ fun DownloadPage(
             ToastUtil.makeToast("No playlists to download")
             return@downloadAllCallback
         }
-        if (NOTIFICATION.getBoolean() && notificationPermission?.status?.isGranted == false) {
-            showNotificationDialog = true
-        } else {
-            checkPermissionOrDownload()
-        }
-    }
-
-    if (showNotificationDialog) {
-        NotificationPermissionDialog(
-            onDismissRequest = {
-                showNotificationDialog = false
-                NOTIFICATION.updateBoolean(false)
-            },
-            onPermissionGranted = {
-                notificationPermission?.launchPermissionRequest()
-            }
-        )
+        checkPermissionOrDownload()
     }
 
     if (showMeteredNetworkDialog) {
