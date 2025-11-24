@@ -39,8 +39,10 @@ import com.junkfood.seal.ui.page.download.DownloadPage
 import com.junkfood.seal.ui.page.download.DownloadViewModel
 import com.junkfood.seal.ui.page.settings.SettingsPage
 import com.junkfood.seal.ui.page.settings.about.CreditsPage
+import com.junkfood.seal.ui.page.setup.SetupFlowPage
 import com.junkfood.seal.ui.page.videolist.VideoListPage
 import com.junkfood.seal.util.PreferenceUtil
+import com.junkfood.seal.util.SETUP_COMPLETED
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.getLong
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -62,6 +64,20 @@ fun HomeEntry(
     downloadViewModel: DownloadViewModel,
     isUrlShared: Boolean
 ) {
+    // Check if setup is completed
+    var isSetupCompleted by rememberSaveable { mutableStateOf(SETUP_COMPLETED.getBoolean()) }
+
+    // If setup is not completed, show the setup flow
+    if (!isSetupCompleted) {
+        SetupFlowPage(
+            onSetupComplete = {
+                isSetupCompleted = true
+            }
+        )
+        return
+    }
+
+    // Normal app flow if setup is completed
     val navController = rememberNavController()
     val context = LocalContext.current
     var showUpdateDialog by rememberSaveable { mutableStateOf(false) }

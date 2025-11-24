@@ -47,6 +47,7 @@ const val FORMAT_SORTING = "format_sorting"
 const val SORTING_FIELDS = "sorting_fields"
 
 const val WELCOME_DIALOG = "welcome_dialog"
+const val SETUP_COMPLETED = "setup_completed"
 const val VIDEO_DIRECTORY = "download_dir"
 const val AUDIO_DIRECTORY = "audio_dir"
 const val AUDIO_DIRECTORY_URI = "audio_dir_uri"
@@ -190,6 +191,7 @@ private val BooleanPreferenceDefaults = mapOf(
     NOTIFICATION to true,
     EMBED_METADATA to true,
     EXTRACT_AUDIO to true,
+    SETUP_COMPLETED to false,
 )
 
 private val IntPreferenceDefaults = mapOf(

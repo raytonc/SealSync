@@ -24,6 +24,9 @@ import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.AUDIO_DIRECTORY
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.COMMAND_DIRECTORY
+import com.junkfood.seal.util.SETUP_COMPLETED
+import com.junkfood.seal.util.YOUTUBE_API_KEY
+import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.FileUtil.createEmptyFile
@@ -33,6 +36,7 @@ import com.junkfood.seal.util.FileUtil.getExternalPrivateDownloadDirectory
 import com.junkfood.seal.util.NotificationUtil
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
+import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateString
 import com.junkfood.seal.util.UpdateUtil
 import com.junkfood.seal.util.VIDEO_DIRECTORY
@@ -86,10 +90,24 @@ class App : Application(), ImageLoaderFactory {
             getExternalDownloadDirectory().absolutePath
         )
 
-        audioDownloadDir = AUDIO_DIRECTORY.getString(File(videoDownloadDir, "Audio").absolutePath)
+        audioDownloadDir = AUDIO_DIRECTORY.getString("")
         if (!PreferenceUtil.containsKey(COMMAND_DIRECTORY)) {
             COMMAND_DIRECTORY.updateString(videoDownloadDir)
         }
+
+        // Migration logic: If user has already configured settings before setup flow was added,
+        // mark setup as completed to avoid showing setup screen to existing users
+        if (!PreferenceUtil.containsKey(SETUP_COMPLETED)) {
+            val hasAudioFolder = AUDIO_DIRECTORY_URI.getString().isNotEmpty()
+            val hasApiKey = YOUTUBE_API_KEY.getString().isNotEmpty()
+            val hasChannelHandle = YOUTUBE_CHANNEL_HANDLE.getString().isNotEmpty()
+
+            // If all three are configured, this is an existing user - mark setup as completed
+            if (hasAudioFolder && hasApiKey && hasChannelHandle) {
+                SETUP_COMPLETED.updateBoolean(true)
+            }
+        }
+
         if (Build.VERSION.SDK_INT >= 26) NotificationUtil.createNotificationChannel()
 
 

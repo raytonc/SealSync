@@ -85,9 +85,6 @@ fun VideoListPage(
     val audioFiles by viewModel.audioFilesFlow.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
 
-    // Check if audio directory URI is set
-    var showFolderSelectionDialog by remember { mutableStateOf(AUDIO_DIRECTORY_URI.getString().isEmpty()) }
-
     // Directory picker launcher
     val dirLauncher =
         rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
@@ -101,7 +98,6 @@ fun VideoListPage(
         }) { uri: Uri? ->
             uri?.let {
                 App.updateDownloadDir(it, Directory.AUDIO)
-                showFolderSelectionDialog = false
                 viewModel.refreshFileList()
             }
         }
@@ -336,31 +332,6 @@ fun VideoListPage(
         )
     }
 
-    if (showFolderSelectionDialog) {
-        SealDialog(
-            onDismissRequest = { /* Don't allow dismiss - folder selection is required */ },
-            title = { Text("Select Audio Folder") },
-            text = {
-                Column {
-                    Text(
-                        text = "Please select the folder where your audio files are stored.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "This is required for the app to detect and manage your audio files properly.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                ConfirmButton(text = "Select Folder") {
-                    dirLauncher.launch(null)
-                }
-            }
-        )
-    }
 }
 
 @Composable
