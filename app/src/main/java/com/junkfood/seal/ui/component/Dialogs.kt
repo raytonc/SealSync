@@ -48,22 +48,6 @@ private val TextPadding = PaddingValues(bottom = 24.dp)
 private val ButtonsMainAxisSpacing = 8.dp
 private val ButtonsCrossAxisSpacing = 12.dp
 
-@Composable
-fun HelpDialog(
-    text: String,
-    onDismissRequest: () -> Unit = {},
-    dismissButton: @Composable (() -> Unit)? = null,
-    confirmButton: @Composable () -> Unit = { ConfirmButton(text = stringResource(id = R.string.got_it)) { onDismissRequest() } },
-) {
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        title = { Text(text = stringResource(id = R.string.how_does_it_work)) },
-        icon = { Icon(Icons.Outlined.HelpOutline, null) },
-        text = { Text(text = text) },
-        confirmButton = confirmButton,
-        dismissButton = dismissButton,
-    )
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -199,45 +183,6 @@ fun SealDialogButtonVariant(
 
 }
 
-@Preview(name = "dark", uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Preview(name = "light", uiMode = Configuration.UI_MODE_NIGHT_NO)
-@Composable
-private fun ButtonVariantPreview() {
-    SealTheme {
-        SealDialogVariant(
-            onDismissRequest = {}, modifier = Modifier,
-            icon = {
-                Icon(
-                    imageVector = Icons.Outlined.SignalCellularConnectedNoInternet4Bar,
-                    contentDescription = null
-                )
-            },
-            title = {
-                Text(
-                    text = "Download with cellular network?",
-                    style = MaterialTheme.typography.titleLarge,
-                    textAlign = TextAlign.Center
-                )
-            },
-            buttons = {
-                SealDialogButtonVariant(
-                    text = stringResource(R.string.allow_always),
-                    shape = TopButtonShape
-                ) {}
-                SealDialogButtonVariant(
-                    text = stringResource(id = R.string.allow_once),
-                    shape = MiddleButtonShape
-                ) {}
-                SealDialogButtonVariant(
-                    text = stringResource(R.string.dont_allow),
-                    shape = BottomButtonShape
-                ) {}
-            }
-        )
-
-
-    }
-}
 
 val TopButtonShape = RoundedCornerShape(
     topStart = 12.dp,
@@ -346,21 +291,4 @@ fun SealDialogVariant(
             }
         }
     }
-}
-
-@Composable
-fun DialogSubtitle(
-    modifier: Modifier = Modifier,
-    text: String,
-    color: Color = MaterialTheme.colorScheme.primary,
-) {
-    Text(
-        text = text,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp)
-            .padding(top = 16.dp, bottom = 4.dp),
-        color = color,
-        style = MaterialTheme.typography.labelLarge
-    )
 }

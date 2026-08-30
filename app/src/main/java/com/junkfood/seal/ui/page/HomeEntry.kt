@@ -36,7 +36,6 @@ import com.junkfood.seal.ui.common.LocalWindowWidthState
 import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.common.animatedComposable
 import com.junkfood.seal.ui.page.download.DownloadPage
-import com.junkfood.seal.ui.page.download.DownloadViewModel
 import com.junkfood.seal.ui.page.settings.SettingsPage
 import com.junkfood.seal.ui.page.settings.about.CreditsPage
 import com.junkfood.seal.ui.page.setup.SetupFlowPage
@@ -60,10 +59,7 @@ import kotlinx.coroutines.withContext
 private const val TAG = "HomeEntry"
 
 @Composable
-fun HomeEntry(
-    downloadViewModel: DownloadViewModel,
-    isUrlShared: Boolean
-) {
+fun HomeEntry() {
     // Check if setup is completed
     var isSetupCompleted by rememberSaveable { mutableStateOf(SETUP_COMPLETED.getBoolean()) }
 
@@ -117,11 +113,6 @@ fun HomeEntry(
         }
     }
 
-    if (isUrlShared) {
-        if (navController.currentDestination?.route != Route.HOME) {
-            navController.popBackStack(route = Route.HOME, inclusive = false, saveState = true)
-        }
-    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -149,7 +140,6 @@ fun HomeEntry(
                             launchSingleTop = true
                         }
                     },
-                    downloadViewModel = downloadViewModel
                 )
             }
             animatedComposable(Route.DOWNLOADS) { VideoListPage { onNavigateBack() } }
@@ -233,7 +223,7 @@ fun HomeEntry(
                         }.onFailure {
                             it.printStackTrace()
                             currentDownloadStatus = UpdateUtil.DownloadStatus.NotYet
-                            ToastUtil.makeToastSuspend(context.getString(R.string.app_update_failed))
+                            ToastUtil.showToast(context.getString(R.string.app_update_failed))
                             return@launch
                         }
                     }

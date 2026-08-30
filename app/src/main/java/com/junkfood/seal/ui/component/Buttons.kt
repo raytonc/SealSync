@@ -36,92 +36,10 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.R
-import com.junkfood.seal.ui.page.settings.general.ytdlpReference
 
 
-@Composable
-fun OutlinedButtonWithIcon(
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    icon: ImageVector,
-    text: String,
-    contentColor: Color = MaterialTheme.colorScheme.primary
-) {
-    OutlinedButton(
-        modifier = modifier,
-        onClick = onClick,
-        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = contentColor)
-    )
-    {
-        Icon(
-            modifier = Modifier.size(ButtonDefaults.IconSize),
-            imageVector = icon,
-            contentDescription = null
-        )
-        Text(
-            modifier = Modifier.padding(start = 8.dp),
-            text = text
-        )
-    }
-}
 
-@Composable
-fun TextButtonWithIcon(
-    modifier: Modifier = Modifier,
-    icon: ImageVector,
-    text: String,
-    contentColor: Color = MaterialTheme.colorScheme.primary,
-    onClick: () -> Unit,
-) {
-    TextButton(
-        modifier = modifier,
-        onClick = onClick,
-        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-        colors = ButtonDefaults.textButtonColors(contentColor = contentColor)
-    )
-    {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                modifier = Modifier.size(18.dp),
-                imageVector = icon,
-                contentDescription = null
-            )
-            Text(
-                modifier = Modifier.padding(start = 8.dp),
-                text = text
-            )
-        }
 
-    }
-}
-
-@Composable
-fun FilledTonalButtonWithIcon(
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    icon: ImageVector,
-    text: String,
-    colors: ButtonColors = ButtonDefaults.filledTonalButtonColors(),
-) {
-    FilledTonalButton(
-        modifier = modifier,
-        onClick = onClick,
-        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-        colors = colors
-    )
-    {
-        Icon(
-            modifier = Modifier.size(18.dp),
-            imageVector = icon,
-            contentDescription = null
-        )
-        Text(
-            modifier = Modifier.padding(start = 8.dp),
-            text = text
-        )
-    }
-}
 
 @Composable
 fun FilledButtonWithIcon(
@@ -168,61 +86,4 @@ fun DismissButton(text: String = stringResource(R.string.dismiss), onClick: () -
     }
 }
 
-@Composable
-fun LinkButton(
-    modifier: Modifier = Modifier,
-    text: String = stringResource(R.string.yt_dlp_docs),
-    icon: ImageVector = Icons.Outlined.OpenInNew,
-    link: String = ytdlpReference
-) {
-    val uriHandler = LocalUriHandler.current
-    TextButtonWithIcon(
-        modifier = modifier,
-        onClick = { uriHandler.openUri(link) },
-        icon = icon,
-        text = text
-    )
-}
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
-@Composable
-fun LongTapTextButton(
-    onClick: () -> Unit,
-    onClickLabel: String,
-    onLongClick: () -> Unit,
-    onLongClickLabel: String,
-    modifier: Modifier = Modifier,
-    shape: Shape = ButtonDefaults.shape,
-    @Suppress("UNUSED_PARAMETER") border: BorderStroke? = null,
-    contentPadding: PaddingValues = ButtonDefaults.ButtonWithIconContentPadding,
-    content: @Composable RowScope.() -> Unit
-) {
-    val contentColor = MaterialTheme.colorScheme.primary
-    Row(
-        modifier = modifier
-            .clip(shape)
-            .combinedClickable(
-                onClick = onClick,
-                onClickLabel = onClickLabel,
-                onLongClick = onLongClick,
-                onLongClickLabel = onLongClickLabel
-            ),
-    ) {
-        CompositionLocalProvider(LocalContentColor provides contentColor) {
-            ProvideTextStyle(value = MaterialTheme.typography.labelLarge) {
-                Row(
-                    Modifier
-                        .defaultMinSize(
-                            minWidth = ButtonDefaults.MinWidth,
-                            minHeight = ButtonDefaults.MinHeight
-                        )
-                        .padding(contentPadding),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                    content = content
-                )
-            }
-        }
-    }
-
-}

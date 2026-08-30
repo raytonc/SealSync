@@ -53,10 +53,7 @@ import com.junkfood.seal.ui.component.PreferenceItem
 import com.junkfood.seal.ui.component.PreferencesHintCard
 import com.junkfood.seal.ui.component.SettingTitle
 import com.junkfood.seal.ui.component.SmallTopAppBar
-import com.junkfood.seal.ui.page.settings.general.Directory
-import com.junkfood.seal.util.CUSTOM_COMMAND
 import com.junkfood.seal.util.FileUtil
-import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateString
 import com.junkfood.seal.util.ShortcutUtil
@@ -83,9 +80,7 @@ fun SettingsPage(
     var isUpdating by remember { mutableStateOf(false) }
     var ytdlpVersion = YoutubeDL.getInstance().version(context.applicationContext)
         ?: context.getString(R.string.ytdlp_update)
-    var isCustomCommandEnabled by remember { mutableStateOf(CUSTOM_COMMAND.getBoolean()) }
     var audioDirectoryText by remember { mutableStateOf(App.audioDownloadDir) }
-    var editingDirectory by remember { mutableStateOf(Directory.AUDIO) }
 
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var currentApiKey by remember { mutableStateOf(YOUTUBE_API_KEY.getString()) }
@@ -104,16 +99,12 @@ fun SettingsPage(
             }
         }) { uri: Uri? ->
             uri?.let {
-                App.updateDownloadDir(it, editingDirectory)
+                App.updateDownloadDir(it)
                 val path = FileUtil.getRealPath(it)
                 audioDirectoryText = path
             }
         }
 
-    fun openDirectoryChooser(directory: Directory = Directory.AUDIO) {
-        editingDirectory = directory
-        dirLauncher.launch(null)
-    }
 
     Scaffold(
         modifier = Modifier
@@ -167,7 +158,7 @@ fun SettingsPage(
                                 status
                             }.onFailure { th ->
                                 th.printStackTrace()
-                                ToastUtil.makeToastSuspend(context.getString(R.string.yt_dlp_update_fail))
+                                ToastUtil.showToast(context.getString(R.string.yt_dlp_update_fail))
                             }.onSuccess { status ->
                                 val message = when (status) {
                                     YoutubeDL.UpdateStatus.DONE ->
@@ -179,7 +170,7 @@ fun SettingsPage(
                                     else ->
                                         context.getString(R.string.yt_dlp_up_to_date) + " (${ytdlpVersion})"
                                 }
-                                ToastUtil.makeToastSuspend(message)
+                                ToastUtil.showToast(message)
                             }
                             isUpdating = false
                         }
@@ -188,15 +179,12 @@ fun SettingsPage(
             }
 
             item {
-                // audio directory
-                if (!isCustomCommandEnabled) {
-                    PreferenceItem(
-                        title = stringResource(id = R.string.audio_directory),
-                        description = audioDirectoryText,
-                        icon = Icons.Rounded.Folder
-                    ) {
-                        openDirectoryChooser(directory = Directory.AUDIO)
-                    }
+                PreferenceItem(
+                    title = stringResource(id = R.string.audio_directory),
+                    description = audioDirectoryText,
+                    icon = Icons.Rounded.Folder
+                ) {
+                    dirLauncher.launch(null)
                 }
             }
 

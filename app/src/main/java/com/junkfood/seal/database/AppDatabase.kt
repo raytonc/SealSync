@@ -3,14 +3,11 @@ package com.junkfood.seal.database
 import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.RoomDatabase
-import com.junkfood.seal.database.objects.CommandTemplate
-import com.junkfood.seal.database.objects.CookieProfile
-import com.junkfood.seal.database.objects.OptionShortcut
 import com.junkfood.seal.database.objects.PlaylistEntry
 
 @Database(
-    entities = [CommandTemplate::class, CookieProfile::class, OptionShortcut::class, PlaylistEntry::class],
-    version = 8,
+    entities = [PlaylistEntry::class],
+    version = 9,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -19,6 +16,7 @@ import com.junkfood.seal.database.objects.PlaylistEntry
         AutoMigration(from = 5, to = 6),
         AutoMigration(from = 6, to = 7, spec = DeleteDownloadHistoryMigration::class),
         AutoMigration(from = 7, to = 8),
+        AutoMigration(from = 8, to = 9, spec = DropUnusedTablesMigration::class),
     ]
 )
 abstract class AppDatabase : RoomDatabase() {

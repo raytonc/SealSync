@@ -1,62 +1,52 @@
 package com.junkfood.seal
 
-import android.app.PendingIntent
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.CheckResult
-import androidx.documentfile.provider.DocumentFile
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
+import androidx.documentfile.provider.DocumentFile
 import com.junkfood.seal.App.Companion.applicationScope
 import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.App.Companion.startService
 import com.junkfood.seal.App.Companion.stopService
-import com.junkfood.seal.Downloader.downloadVideoInPlaylistByIndexList
-import com.junkfood.seal.Downloader.downloadVideoWithConfigurations
-import com.junkfood.seal.Downloader.getInfoAndDownload
-import com.junkfood.seal.database.objects.CommandTemplate
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.AudioFileData
-import com.junkfood.seal.util.COMMAND_DIRECTORY
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
-import com.junkfood.seal.util.Entries
 import com.junkfood.seal.util.FileUtil
-import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
-import com.junkfood.seal.util.Format
 import com.junkfood.seal.util.NotificationUtil
 import com.junkfood.seal.util.PlaylistResult
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.ToastUtil
-import com.junkfood.seal.util.VideoClip
 import com.junkfood.seal.util.VideoInfo
 import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YouTubeApiService
-import com.junkfood.seal.util.toHttpsUrl
+import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
-import java.util.concurrent.CancellationException
-import kotlin.math.roundToInt
-
 
 /**
- * Singleton Downloader for state holder & perform downloads, used by `Activity` & `Service`
+ * Singleton state holder that runs playlist syncs. Owned by the UI and by
+ * [DownloadService], which keeps the process alive while a sync is in flight.
  */
 object Downloader {
 
     private const val TAG = "Downloader"
+
+    /** Audio containers yt-dlp may produce, used when scanning the destination folder. */
+    private val AUDIO_EXTENSIONS =
+        setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
+
+    /** Matches the `[videoId]` yt-dlp appends via the output template. */
+    private val VIDEO_ID_PATTERN = Regex("\\[([a-zA-Z0-9_-]{6,50})]")
 
     sealed class State {
         data class DownloadingPlaylist(
@@ -64,8 +54,6 @@ object Downloader {
             val itemCount: Int = 0,
         ) : State()
 
-        data object DownloadingVideo : State()
-        data object FetchingInfo : State()
         data object Idle : State()
         data object Updating : State()
     }
@@ -90,589 +78,58 @@ object Downloader {
             }
     }
 
-
-    data class CustomCommandTask(
-        val template: CommandTemplate,
-        val url: String,
-        val output: String,
-        val state: State,
-        val currentLine: String
-    ) {
-        fun toKey() = makeKey(url, template.name)
-        sealed class State {
-            data class Error(val errorReport: String) : State()
-            object Completed : State()
-            object Canceled : State()
-            data class Running(val progress: Float) : State()
-        }
-
-        override fun hashCode(): Int {
-            return (this.url + this.template.name + this.template.template).hashCode()
-        }
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (javaClass != other?.javaClass) return false
-
-            other as CustomCommandTask
-
-            if (template != other.template) return false
-            if (url != other.url) return false
-            if (output != other.output) return false
-            if (state != other.state) return false
-            if (currentLine != other.currentLine) return false
-
-            return true
-        }
-
-
-        fun onCopyLog(clipboardManager: ClipboardManager) {
-            clipboardManager.setText(AnnotatedString(output))
-        }
-
-
-        fun onRestart() {
-            applicationScope.launch(Dispatchers.IO) {
-                DownloadUtil.executeCommandInBackground(url, template)
-            }
-        }
-
-
-        fun onCopyError(clipboardManager: ClipboardManager) {
-            clipboardManager.setText(AnnotatedString(currentLine))
-            ToastUtil.makeToast(R.string.error_copied)
-        }
-
-        fun onCancel() {
-            toKey().run {
-                YoutubeDL.destroyProcessById(this)
-                onProcessCanceled(this)
-            }
-        }
-    }
-
-
-    private var currentJob: Job? = null
-    private var downloadResultTemp: Result<List<String>> = Result.failure(Exception())
-
     private val mutableDownloaderState: MutableStateFlow<State> = MutableStateFlow(State.Idle)
     private val mutableTaskState = MutableStateFlow(DownloadTaskItem())
-    private val mutablePlaylistResult = MutableStateFlow(PlaylistResult())
     private val mutableErrorState: MutableStateFlow<ErrorState> = MutableStateFlow(ErrorState.None)
-    private val mutableProcessCount = MutableStateFlow(0)
-    private val mutableQuickDownloadCount = MutableStateFlow(0)
 
-    val mutableTaskList = mutableStateMapOf<String, CustomCommandTask>()
-
-    val taskState = mutableTaskState.asStateFlow()
     val downloaderState = mutableDownloaderState.asStateFlow()
-    val playlistResult = mutablePlaylistResult.asStateFlow()
     val errorState = mutableErrorState.asStateFlow()
-    val processCount = mutableProcessCount.asStateFlow()
 
     init {
+        // Keep the foreground service bound exactly while something is running.
         applicationScope.launch {
-            downloaderState.combine(processCount) { state, cnt ->
-                if (cnt > 0) true
-                else when (state) {
-                    is State.Idle -> false
-                    else -> true
-                }
-            }.combine(mutableQuickDownloadCount) { isRunning, cnt ->
-                if (!isRunning) cnt > 0 else true
-            }.collect {
-                if (it) startService()
-                else stopService()
+            downloaderState.collect { state ->
+                if (state is State.Idle) stopService() else startService()
             }
-
         }
     }
 
-    fun isDownloaderAvailable(): Boolean {
+    private fun isDownloaderAvailable(): Boolean {
         if (downloaderState.value !is State.Idle) {
-            ToastUtil.makeToastSuspend(context.getString(R.string.task_running))
+            ToastUtil.showToast(context.getString(R.string.task_running))
             return false
         }
         return true
     }
 
-
-    fun makeKey(url: String, templateName: String): String = "${templateName}_$url"
-
-    fun onTaskStarted(template: CommandTemplate, url: String) =
-        CustomCommandTask(
-            template = template,
-            url = url,
-            output = "",
-            state = CustomCommandTask.State.Running(0f),
-            currentLine = ""
-        ).run {
-            mutableTaskList.put(this.toKey(), this)
-        }
-
-
-    fun updateTaskOutput(template: CommandTemplate, url: String, line: String, progress: Float) {
-        val key = makeKey(url, template.name)
-        val oldValue = mutableTaskList[key] ?: return
-        val newValue = oldValue.run {
-            copy(
-                output = output + line + "\n",
-                currentLine = line,
-                state = CustomCommandTask.State.Running(progress)
-            )
-        }
-        mutableTaskList[key] = newValue
-    }
-
-
-    fun onTaskEnded(
-        template: CommandTemplate,
-        url: String,
-        response: String? = null
-    ) {
-        val key = makeKey(url, template.name)
-        NotificationUtil.finishNotification(
-            notificationId = key.toNotificationId(),
-            title = key,
-            text = context.getString(R.string.status_completed),
-        )
-        mutableTaskList.run {
-            val oldValue = get(key) ?: return
-            val newValue = oldValue.copy(state = CustomCommandTask.State.Completed).run {
-                response?.let { copy(output = response) } ?: this
-            }
-            this[key] = newValue
-        }
-        FileUtil.scanDownloadDirectoryToMediaLibrary(COMMAND_DIRECTORY.getString())
-    }
-
-
-    fun onProcessEnded() =
-        mutableProcessCount.update { it - 1 }
-
-
-    fun onProcessCanceled(taskId: String) =
-        mutableTaskList.run {
-            get(taskId)?.let {
-                this.put(
-                    taskId,
-                    it.copy(state = CustomCommandTask.State.Canceled)
-                )
-            }
-        }
-
-    fun onTaskError(errorReport: String, template: CommandTemplate, url: String) =
-        mutableTaskList.run {
-            val key = makeKey(url, template.name)
-            NotificationUtil.makeErrorReportNotification(
-                notificationId = key.toNotificationId(),
-                error = errorReport
-            )
-            val oldValue = mutableTaskList[key] ?: return
-            mutableTaskList[key] = oldValue.copy(
-                state = CustomCommandTask.State.Error(
-                    errorReport
-                ), currentLine = errorReport, output = oldValue.output + "\n" + errorReport
-            )
-        }
-
-
-    private fun VideoInfo.toTask(playlistIndex: Int = 0, preferencesHash: Int): DownloadTaskItem =
-        DownloadTaskItem(
-            webpageUrl = webpageUrl.toString(),
-            title = title,
-            uploader = uploader ?: channel ?: uploaderId.toString(),
-            duration = duration?.roundToInt() ?: 0,
-            taskId = id + preferencesHash,
-            thumbnailUrl = thumbnail.toHttpsUrl(),
-            fileSizeApprox = fileSize ?: fileSizeApprox ?: .0,
-            playlistIndex = playlistIndex
-        )
-
     fun updateState(state: State) = mutableDownloaderState.update { state }
 
-    fun clearErrorState() {
+    private fun clearErrorState() {
         mutableErrorState.update { ErrorState.None }
     }
 
-    private fun fetchInfoError(url: String, errorReport: String) {
-        mutableErrorState.update { ErrorState.FetchInfoError(url, errorReport) }
-    }
-
-    private fun downloadError(url: String, errorReport: String) {
-        mutableErrorState.update { ErrorState.DownloadError(url, errorReport) }
-    }
-
-
-    private fun clearProgressState(isFinished: Boolean) {
-        mutableTaskState.update {
-            it.copy(
-                progress = if (isFinished) 100f else 0f,
-                progressText = "",
-            )
-        }
-        if (!isFinished)
-            downloadResultTemp = Result.failure(Exception())
-    }
-
-    fun updatePlaylistResult(playlistResult: PlaylistResult = PlaylistResult()) =
-        mutablePlaylistResult.update { playlistResult }
-
-    fun quickDownload(
-        url: String,
-        downloadPreferences: DownloadUtil.DownloadPreferences = DownloadUtil.DownloadPreferences()
-    ) {
-        applicationScope.launch(Dispatchers.IO) {
-            mutableQuickDownloadCount.update { it + 1 }
-            DownloadUtil.fetchVideoInfoFromUrl(
-                url = url,
-                preferences = downloadPreferences
-            )
-                .onFailure {
-                    manageDownloadError(
-                        th = it,
-                        url = url,
-                        title = url,
-                        isFetchingInfo = true
-                    )
-                }
-                .onSuccess { videoInfo ->
-                    val taskId = videoInfo.id + downloadPreferences.hashCode()
-                    val notificationId = taskId.toNotificationId()
-                    ToastUtil.makeToastSuspend(
-                        context.getString(R.string.download_start_msg)
-                            .format(videoInfo.title)
-                    )
-                    DownloadUtil.downloadVideo(
-                        videoInfo = videoInfo,
-                        downloadPreferences = downloadPreferences,
-                        taskId = taskId
-                    ) { progress, _, line ->
-                        NotificationUtil.notifyProgress(
-                            notificationId = notificationId,
-                            progress = progress.toInt(),
-                            text = line,
-                            title = videoInfo.title,
-                            taskId = taskId
-                        )
-                    }.onFailure {
-                        NotificationUtil.cancelNotification(notificationId)
-                        if (it is YoutubeDL.CanceledException) return@onFailure
-                        NotificationUtil.makeErrorReportNotification(
-                            title = videoInfo.title, notificationId = notificationId,
-                            error = it.message.toString()
-                        )
-                    }.onSuccess {
-                        val text =
-                            context.getString(if (it.isEmpty()) R.string.status_completed else R.string.download_finish_notification)
-
-                        FileUtil.createIntentForOpeningFile(it.firstOrNull()).run {
-                            NotificationUtil.finishNotification(
-                                notificationId,
-                                title = videoInfo.title,
-                                text = text,
-                                intent = if (this != null) PendingIntent.getActivity(
-                                    context,
-                                    0,
-                                    this,
-                                    PendingIntent.FLAG_IMMUTABLE
-                                ) else null
-                            )
-                        }
-                    }
-                }
-            mutableQuickDownloadCount.update { it - 1 }
-        }
-    }
-
-    fun getInfoAndDownload(
-        url: String,
-        downloadPreferences: DownloadUtil.DownloadPreferences = DownloadUtil.DownloadPreferences()
-    ) {
-        currentJob = applicationScope.launch(Dispatchers.IO) {
-            updateState(State.FetchingInfo)
-            DownloadUtil.fetchVideoInfoFromUrl(
-                url = url,
-                preferences = downloadPreferences
-            )
-                .onFailure {
-                    manageDownloadError(
-                        th = it,
-                        url = url,
-                        isFetchingInfo = true
-                    )
-                }
-                .onSuccess { info ->
-                    downloadResultTemp = downloadVideo(
-                        videoInfo = info,
-                        preferences = downloadPreferences
-                    )
-                }
-        }
-    }
-
     /**
-     * Triggers a download with extra configurations made by user in the custom format selection page
-     */
-    fun downloadVideoWithConfigurations(
-        videoInfo: VideoInfo,
-        formatList: List<Format>,
-        videoClips: List<VideoClip>,
-        splitByChapter: Boolean,
-        newTitle: String,
-        selectedSubtitleCodes: List<String>,
-    ) {
-        currentJob = applicationScope.launch(Dispatchers.IO) {
-            val fileSize = formatList.fold(.0) { acc, format ->
-                acc + (format.fileSize ?: format.fileSizeApprox ?: .0)
-            }
-
-            val info = videoInfo
-                .run { if (fileSize != .0) copy(fileSize = fileSize) else this }
-                .run { if (newTitle.isNotEmpty()) copy(title = newTitle) else this }
-
-            val audioOnly =
-                formatList.isNotEmpty() && formatList.fold(true) { acc: Boolean, format: Format ->
-                    acc && (format.vcodec == "none" && format.acodec != "none")
-                }
-
-            val mergeAudioStream = formatList.count { format ->
-                format.vcodec == "none" && format.acodec != "none"
-            } > 1
-
-            val formatId = formatList.joinToString(separator = "+") { it.formatId.toString() }
-
-            val downloadPreferences = DownloadUtil.DownloadPreferences(
-                formatIdString = formatId,
-                videoClips = videoClips,
-                splitByChapter = splitByChapter,
-                newTitle = newTitle,
-                mergeAudioStream = mergeAudioStream
-            ).run {
-                copy(extractAudio = extractAudio || audioOnly)
-            }.run {
-                selectedSubtitleCodes.takeIf { it.isNotEmpty() }
-                    ?.let {
-                        val autoSubtitle = !info.subtitles.keys.containsAll(selectedSubtitleCodes)
-                        copy(
-                            downloadSubtitle = true,
-                            autoSubtitle = autoSubtitle,
-                            subtitleLanguage = selectedSubtitleCodes.joinToString(separator = ",") { it }
-                        )
-                    }
-                    ?: this
-            }
-            downloadResultTemp = downloadVideo(
-                videoInfo = info,
-                preferences = downloadPreferences
-            )
-        }
-    }
-
-    fun downloadVideoWithInfo(info: VideoInfo) {
-        currentJob = applicationScope.launch(Dispatchers.IO) {
-            downloadResultTemp = downloadVideo(videoInfo = info)
-        }
-    }
-
-    /**
-     * This method is used for download a single video and multiple videos from playlist at the same time.
-     * @see downloadVideoInPlaylistByIndexList
-     * @see getInfoAndDownload
-     * @see downloadVideoWithConfigurations
-     */
-    @CheckResult
-    private suspend fun downloadVideo(
-        playlistIndex: Int = 0,
-        playlistUrl: String = "",
-        videoInfo: VideoInfo,
-        preferences: DownloadUtil.DownloadPreferences = DownloadUtil.DownloadPreferences()
-    ): Result<List<String>> {
-
-        Log.d(TAG, preferences.subtitleLanguage)
-        mutableTaskState.update { videoInfo.toTask(preferencesHash = preferences.hashCode()) }
-
-        val isDownloadingPlaylist = downloaderState.value is State.DownloadingPlaylist
-        if (!isDownloadingPlaylist)
-            updateState(State.DownloadingVideo)
-        val taskId = videoInfo.id + preferences.hashCode()
-        val notificationId = taskId.toNotificationId()
-        Log.d(TAG, "downloadVideo: id=${videoInfo.id} " + videoInfo.title)
-        Log.d(TAG, "notificationId: $notificationId")
-
-        return DownloadUtil.downloadVideo(
-            videoInfo = videoInfo,
-            playlistUrl = playlistUrl,
-            playlistItem = playlistIndex,
-            downloadPreferences = preferences,
-            taskId = videoInfo.id + preferences.hashCode()
-        ) { progress, _, line ->
-            Log.d(TAG, line)
-            mutableTaskState.update {
-                it.copy(progress = progress, progressText = line)
-            }
-            // Only show individual progress notifications for single downloads
-            // Playlist/sync operations use the service notification counter instead
-            if (downloaderState.value !is State.DownloadingPlaylist) {
-                NotificationUtil.notifyProgress(
-                    notificationId = notificationId,
-                    progress = progress.toInt(),
-                    text = line,
-                    title = videoInfo.title,
-                    taskId = taskId
-                )
-            }
-        }.onFailure {
-            manageDownloadError(
-                th = it,
-                url = videoInfo.originalUrl,
-                title = videoInfo.title,
-                isFetchingInfo = false,
-                notificationId = notificationId,
-                isTaskAborted = !isDownloadingPlaylist
-            )
-        }.onSuccess {
-            if (!isDownloadingPlaylist) finishProcessing()
-        }
-    }
-
-    fun downloadVideoInPlaylistByIndexList(
-        url: String,
-        indexList: List<Int>,
-        playlistItemList: List<Entries> = emptyList(),
-        preferences: DownloadUtil.DownloadPreferences = DownloadUtil.DownloadPreferences()
-    ) {
-        val itemCount = indexList.size
-
-        if (!isDownloaderAvailable()) return
-
-        mutableDownloaderState.update { State.DownloadingPlaylist() }
-
-        currentJob = applicationScope.launch(Dispatchers.IO) {
-            // Initialize playlist notification with counter
-            NotificationUtil.initializeServiceNotificationForPlaylist(itemCount)
-
-            for (i in indexList.indices) {
-                mutableDownloaderState.update {
-                    if (it is State.DownloadingPlaylist)
-                        it.copy(currentItem = i + 1, itemCount = indexList.size)
-                    else return@launch
-                }
-
-                NotificationUtil.updateServiceNotificationForPlaylist(
-                    index = i + 1, itemCount = itemCount
-                )
-
-                val playlistIndex = indexList[i]
-                val playlistEntry = playlistItemList.getOrNull(i)
-
-                Log.d(TAG, playlistEntry?.title.toString())
-
-                val title = playlistEntry?.title
-
-                DownloadUtil.fetchVideoInfoFromUrl(
-                    url = url,
-                    playlistItem = playlistIndex,
-                    preferences = preferences
-                ).onSuccess {
-                    if (downloaderState.value !is State.DownloadingPlaylist)
-                        return@launch
-                    downloadResultTemp =
-                        downloadVideo(
-                            videoInfo = it,
-                            playlistIndex = playlistIndex,
-                            playlistUrl = url,
-                            preferences = preferences,
-                        ).onFailure { th ->
-                            manageDownloadError(
-                                th = th,
-                                url = it.originalUrl,
-                                title = it.title,
-                                isFetchingInfo = false,
-                                isTaskAborted = false
-                            )
-                        }
-                }.onFailure { th ->
-                    manageDownloadError(
-                        th = th,
-                        url = playlistEntry?.url,
-                        title = title,
-                        isFetchingInfo = true,
-                        isTaskAborted = false
-                    )
-                }
-            }
-            NotificationUtil.finishPlaylistNotification(itemCount)
-            finishProcessing()
-        }
-    }
-
-    /**
-     * Syncs audio folder with all playlists:
-     * - Downloads items in playlists that aren't in folder
-     * - Deletes files in folder that aren't in any playlist
-     * @param playlists List of playlist entries to sync
+     * Syncs the audio folder against every saved playlist: downloads playlist items that
+     * are missing locally, and deletes local files that are no longer in any playlist.
      */
     fun syncPlaylists(playlists: List<PlaylistEntry>) {
         if (!isDownloaderAvailable()) return
         if (playlists.isEmpty()) {
-            ToastUtil.makeToast("No playlists to sync")
+            ToastUtil.showToast(context.getString(R.string.sync_no_playlists))
             return
         }
 
-        // Check if YouTube API key is configured
         val apiKey = YOUTUBE_API_KEY.getString()
         if (apiKey.isBlank()) {
-            ToastUtil.makeToast("YouTube API key not configured. Please add one in Settings.")
+            ToastUtil.showToast(context.getString(R.string.sync_no_api_key))
             return
         }
 
-        Log.d(TAG, "syncPlaylists: Starting sync for ${playlists.size} playlists")
+        Log.d(TAG, "syncPlaylists: starting sync for ${playlists.size} playlists")
         mutableDownloaderState.update { State.DownloadingPlaylist() }
 
-        currentJob = applicationScope.launch(Dispatchers.IO) {
-            // === Refresh playlist metadata via YouTube API ===
-            if (apiKey.isNotBlank()) {
-                Log.d(TAG, "syncPlaylists: Refreshing metadata for ${playlists.size} playlists")
-
-                playlists.forEachIndexed { index, playlist ->
-                    try {
-                        val playlistId = playlist.playlistId
-                            ?: YouTubeApiService.extractPlaylistId(playlist.url)
-
-                        playlistId?.let { id ->
-                            val info = YouTubeApiService.getPlaylistInfo(id, apiKey)
-                            info?.let {
-                                val updated = playlist.copy(
-                                    title = it.title,
-                                    thumbnailUrl = it.thumbnailUrl,
-                                    videoCount = it.videoCount,
-                                    channelTitle = it.channelTitle,
-                                    description = it.description,
-                                    lastSynced = System.currentTimeMillis(),
-                                    playlistId = id
-                                )
-                                DatabaseUtil.updatePlaylist(updated)
-                                Log.d(TAG, "syncPlaylists: Updated metadata for: ${it.title}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(
-                            TAG,
-                            "syncPlaylists: Failed to refresh metadata for ${playlist.title}",
-                            e
-                        )
-                        // Continue with other playlists even if one fails
-                    }
-                }
-
-                ToastUtil.makeToastSuspend("Playlist metadata refreshed")
-            } else {
-                Log.w(
-                    TAG,
-                    "syncPlaylists: YouTube API key not configured, skipping metadata refresh"
-                )
-            }
+        applicationScope.launch(Dispatchers.IO) {
+            refreshPlaylistMetadata(playlists, apiKey)
 
             val preferences = DownloadUtil.DownloadPreferences(
                 extractAudio = true,
@@ -681,372 +138,281 @@ object Downloader {
                 cropArtwork = true
             )
 
-            // helper to normalize titles for filename comparison
-            fun normalizeName(s: String): String =
-                s.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "")
-
-            // Step 1: Fetch all video IDs from all playlists
-            val playlistVideos =
-                mutableMapOf<String, Pair<String, Int>>() // videoId -> (playlistUrl, index)
-            val titleToIdTemp = mutableMapOf<String, String>() // normalizedTitle -> videoId
-            var totalVideos = 0
-            var playlistFetchFailures = 0
-
-            for (playlistEntry in playlists) {
-                DownloadUtil.getPlaylistOrVideoInfo(
-                    playlistURL = playlistEntry.url,
-                    downloadPreferences = preferences
-                ).onSuccess { info ->
-                    when (info) {
-                        is PlaylistResult -> {
-                            val entries = info.entries ?: emptyList()
-                            entries.forEachIndexed { index, entry ->
-                                entry.id?.let { videoId ->
-                                    playlistVideos[videoId] = Pair(playlistEntry.url, index + 1)
-                                    entry.title?.let { ttl ->
-                                        titleToIdTemp[normalizeName(ttl)] = videoId
-                                    }
-                                    totalVideos++
-                                }
-                            }
-                        }
-
-                        is VideoInfo -> {
-                            playlistVideos[info.id] = Pair(playlistEntry.url, 0)
-                            info.title.takeIf { it.isNotEmpty() }?.let { ttl ->
-                                titleToIdTemp[normalizeName(ttl)] = info.id
-                            }
-                            totalVideos++
-                        }
-                    }
-                }.onFailure { th ->
-                    playlistFetchFailures++
-                    Log.e(
-                        TAG,
-                        "syncPlaylists: Failed to fetch playlist '${playlistEntry.title}': ${th.message}"
-                    )
-                }
-            }
-
-            // Abort if any playlist failed to fetch to prevent data loss
-            if (playlistFetchFailures > 0) {
-                ToastUtil.makeToastSuspend("Failed to fetch $playlistFetchFailures playlist(s). Sync aborted to prevent data loss.")
+            // Step 1: enumerate every video across every playlist.
+            val remote = fetchRemoteVideos(playlists, preferences) ?: run {
                 finishProcessing()
                 return@launch
             }
 
-            Log.d(
-                TAG,
-                "syncPlaylists: Found $totalVideos videos across ${playlists.size} playlists"
-            )
-
-            // Step 2: Scan audio directory for existing files
-            val uriString = AUDIO_DIRECTORY_URI.getString()
-            val existingFiles: List<AudioFileData> = if (uriString.isNotEmpty()) {
-                // Use SAF (Storage Access Framework) for scoped storage compatibility
-                try {
-                    val treeUri = Uri.parse(uriString)
-                    Log.d(TAG, "syncPlaylists: Scanning using SAF with URI: $treeUri")
-                    scanAudioFilesWithDocumentFile(context, treeUri)
-                        .filter { !it.name.startsWith(".trashed-") }
-                        .also {
-                            Log.d(TAG, "syncPlaylists: Found ${it.size} existing audio files via SAF")
-                        }
-                } catch (e: Exception) {
-                    Log.e(TAG, "syncPlaylists: Failed to scan audio folder", e)
-                    ToastUtil.makeToastSuspend("Failed to scan audio folder: ${e.message}")
-                    finishProcessing()
-                    return@launch
-                }
-            } else {
-                // Fallback to File API for legacy paths (non-SAF)
-                Log.w(TAG, "syncPlaylists: No SAF URI set, using File API (may not work with scoped storage)")
-                val audioDir = File(App.audioDownloadDir)
-                if (!audioDir.exists()) {
-                    audioDir.mkdirs()
-                }
-
-                // Clean up old playlist metadata files to avoid MediaStore conflicts
-                try {
-                    audioDir.listFiles()?.forEach { file ->
-                        // Delete playlist-level metadata files (contains playlist ID in brackets)
-                        if (file.name.matches(Regex(".*\\[PL[a-zA-Z0-9_-]+\\]\\.(info\\.json|jpg|jpeg|png|webp).*"))) {
-                            file.delete()
-                            Log.d(TAG, "syncPlaylists: Cleaned up old playlist metadata: ${file.name}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "syncPlaylists: Failed to clean up old metadata files", e)
-                }
-
-                val allowedExts = listOf("mp3", "m4a", "wav", "aac", "opus", "ogg", "oga", "webm", "flac")
-                audioDir.walkTopDown()
-                    .filter { file ->
-                        file.isFile &&
-                                file.extension.lowercase() in allowedExts &&
-                                !file.name.startsWith(".trashed-")
-                    }
-                    .map { file ->
-                        AudioFileData(
-                            uri = Uri.fromFile(file),
-                            name = file.name,
-                            size = file.length(),
-                            lastModified = file.lastModified()
-                        )
-                    }
-                    .toList()
-            }
-
-            // Step 3: Extract video IDs from filenames and also collect normalized basenames
-            val fileVideoIdMap =
-                mutableMapOf<String, AudioFileData>() // videoId -> AudioFileData (only when an ID bracket is present)
-            val fileBasenameSet = mutableSetOf<String>() // normalized basenames for title matching
-            // accept a wider range of ID lengths to support other extractors, but keep it conservative
-            val videoIdPattern = Regex("\\[([a-zA-Z0-9_-]{6,50})\\]")
-
-            existingFiles.forEach { fileData ->
-                val nameNoExt = fileData.name.substringBeforeLast('.')
-                fileBasenameSet.add(normalizeName(nameNoExt))
-                val match = videoIdPattern.find(fileData.name)
-                match?.groupValues?.get(1)?.let { videoId ->
-                    fileVideoIdMap[videoId] = fileData
-                }
-            }
-
-            Log.d(
-                TAG,
-                "syncPlaylists: Found ${fileVideoIdMap.size} existing files with bracketed IDs and ${fileBasenameSet.size} files total"
-            )
-
-            // titleToIdTemp was populated during playlist parsing with normalized titles
-
-            // Step 4: Determine which playlist items are already present (by ID or by normalized title)
-            val matchedVideoIds = mutableSetOf<String>()
-            playlistVideos.forEach { (videoId, _) ->
-                if (fileVideoIdMap.containsKey(videoId)) {
-                    matchedVideoIds.add(videoId)
-                } else {
-                    // try title-based matching using the titles we captured during playlist parsing
-                    titleToIdTemp.entries.find { (normTitle, id) ->
-                        id == videoId && fileBasenameSet.contains(
-                            normTitle
-                        )
-                    }
-                        ?.let { matchedVideoIds.add(videoId) }
-                }
-            }
-
-            // Safety check: Ensure we have playlist data before deleting anything
-            if (playlistVideos.isEmpty()) {
-                Log.e(TAG, "syncPlaylists: ABORT - No playlist videos fetched!")
-                ToastUtil.makeToastSuspend("Sync aborted: No playlist data available")
+            if (remote.videos.isEmpty()) {
+                Log.e(TAG, "syncPlaylists: abort, no playlist videos fetched")
+                ToastUtil.showToast(context.getString(R.string.sync_no_playlist_data))
                 finishProcessing()
                 return@launch
             }
 
-            // Step 5: Delete files that have bracketed IDs but are not present in any playlist
-            val filesToDelete = fileVideoIdMap.filterKeys { it !in playlistVideos.keys }
-            filesToDelete.forEach { (videoId, fileData) ->
-                try {
-                    // Use DocumentFile for SAF-compatible deletion
-                    val docFile = DocumentFile.fromSingleUri(context, fileData.uri)
-                    if (docFile?.delete() == true) {
-                        Log.d(TAG, "syncPlaylists: Deleted ${fileData.name} (ID: $videoId)")
+            // Step 2: scan the destination folder.
+            val existingFiles = scanExistingAudioFiles() ?: run {
+                finishProcessing()
+                return@launch
+            }
+
+            // Step 3: index local files by embedded video id, and by normalized basename
+            // so files downloaded before ids were in the template still match.
+            val filesByVideoId = mutableMapOf<String, AudioFileData>()
+            val localBasenames = mutableSetOf<String>()
+            existingFiles.forEach { file ->
+                localBasenames.add(normalizeName(file.name.substringBeforeLast('.')))
+                VIDEO_ID_PATTERN.find(file.name)?.groupValues?.get(1)?.let {
+                    filesByVideoId[it] = file
+                }
+            }
+
+            // Step 4: a remote video is present if its id matches a file, or its title does.
+            val presentVideoIds = remote.videos.keys.filterTo(mutableSetOf()) { videoId ->
+                filesByVideoId.containsKey(videoId) ||
+                        remote.normalizedTitles[videoId]?.let(localBasenames::contains) == true
+            }
+
+            // Step 5: delete identifiable local files that no longer belong to any playlist.
+            // Only files carrying an id are eligible, so untracked files are never touched.
+            val filesToDelete = filesByVideoId.filterKeys { it !in remote.videos }
+            filesToDelete.forEach { (videoId, file) ->
+                runCatching {
+                    if (DocumentFile.fromSingleUri(context, file.uri)?.delete() == true) {
+                        Log.d(TAG, "syncPlaylists: deleted ${file.name} ($videoId)")
                     } else {
-                        Log.w(TAG, "syncPlaylists: Failed to delete ${fileData.name} (ID: $videoId)")
+                        Log.w(TAG, "syncPlaylists: failed to delete ${file.name} ($videoId)")
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "syncPlaylists: Failed to delete ${fileData.name}", e)
-                }
+                }.onFailure { Log.e(TAG, "syncPlaylists: failed to delete ${file.name}", it) }
             }
 
-            if (filesToDelete.isNotEmpty()) {
-                ToastUtil.makeToastSuspend("Deleted ${filesToDelete.size} files not in playlists")
-            }
-
-            // Step 6: Download videos not in folder (considered present if matched by id or title)
-            val videosToDownload = playlistVideos.filterKeys { it !in matchedVideoIds }
+            // Step 6: download whatever is still missing.
+            val videosToDownload = remote.videos.filterKeys { it !in presentVideoIds }
             val downloadCount = videosToDownload.size
-
-            Log.d(TAG, "syncPlaylists: Need to download $downloadCount videos")
-
-            // Diagnostic logging to help debug false 'already synced' reports
             Log.d(
                 TAG,
-                "syncPlaylists: DIAG playlistVideosCount=${playlistVideos.size} playlistVideoIds=${playlistVideos.keys}"
-            )
-            Log.d(
-                TAG,
-                "syncPlaylists: DIAG existingFilesCount=${existingFiles.size} filesWithBracketedIds=${fileVideoIdMap.keys}"
-            )
-            Log.d(TAG, "syncPlaylists: DIAG normalizedFileBasenames=${fileBasenameSet}")
-            Log.d(TAG, "syncPlaylists: DIAG matchedVideoIds=${matchedVideoIds}")
-            Log.d(
-                TAG,
-                "syncPlaylists: DIAG videosToDownloadCount=${videosToDownload.size} videosToDownload=${videosToDownload.keys}"
+                "syncPlaylists: ${remote.videos.size} remote, ${existingFiles.size} local, " +
+                        "$downloadCount to download, ${filesToDelete.size} to delete"
             )
 
-            // If we detect an unexpected 'already synced' case, emit an additional warning log
-            if (playlistVideos.isNotEmpty() && existingFiles.isEmpty() && downloadCount == 0) {
-                Log.w(
-                    TAG,
-                    "syncPlaylists: WARNING - playlist has items but no files found, yet downloadCount==0. Inspect DIAG logs above."
-                )
-            }
-
-            // Check if already synced BEFORE creating notification
             if (downloadCount == 0) {
-                ToastUtil.makeToastSuspend("Folder is already synced")
-                // No notification when already synced
-                finishProcessing()
+                ToastUtil.showToast(context.getString(R.string.sync_already_synced))
+                finishProcessing(deleted = filesToDelete.size)
                 return@launch
             }
 
-            // Initialize playlist notification with counter (only when there's work to do)
-            NotificationUtil.initializeServiceNotificationForPlaylist(downloadCount)
-
-            videosToDownload.entries.forEachIndexed { index, (videoId, urlAndIndex) ->
+            videosToDownload.entries.forEachIndexed { index, (videoId, source) ->
                 if (downloaderState.value !is State.DownloadingPlaylist) {
-                    Log.d(TAG, "syncPlaylists: Sync cancelled")
+                    Log.d(TAG, "syncPlaylists: cancelled")
                     return@launch
                 }
 
                 mutableDownloaderState.update {
-                    if (it is State.DownloadingPlaylist)
+                    if (it is State.DownloadingPlaylist) {
                         it.copy(currentItem = index + 1, itemCount = downloadCount)
-                    else return@launch
+                    } else return@launch
                 }
+                NotificationUtil.updateServiceNotificationForPlaylist(index + 1, downloadCount)
 
-                NotificationUtil.updateServiceNotificationForPlaylist(
-                    index = index + 1, itemCount = downloadCount
-                )
-
-                val (playlistUrl, playlistIndex) = urlAndIndex
-
-                Log.d(
-                    TAG,
-                    "syncPlaylists: [${index + 1}/$downloadCount] Downloading video ID: $videoId"
-                )
-
-                // Fetch video info using playlist-items to get the specific video
-                val playlistItemParam = if (playlistIndex > 0) playlistIndex else 0
+                val (playlistUrl, playlistIndex) = source
+                Log.d(TAG, "syncPlaylists: [${index + 1}/$downloadCount] $videoId")
 
                 DownloadUtil.fetchVideoInfoFromUrl(
                     url = playlistUrl,
-                    playlistItem = playlistItemParam,
+                    playlistItem = playlistIndex,
                     preferences = preferences
                 ).onSuccess { videoInfo ->
-                    if (downloaderState.value !is State.DownloadingPlaylist)
-                        return@launch
-
-                    // Download as individual video (not via playlist) to avoid re-processing all items
-                    // Pass playlistIndex=0 and empty playlistUrl to trigger --no-playlist mode
-                    downloadResultTemp = downloadVideo(
-                        videoInfo = videoInfo,
-                        playlistIndex = 0,
-                        playlistUrl = "",
-                        preferences = preferences,
-                    ).onFailure { th ->
-                        manageDownloadError(
-                            th = th,
-                            url = videoInfo.originalUrl,
-                            title = videoInfo.title,
-                            isFetchingInfo = false,
-                            isTaskAborted = false
-                        )
+                    if (downloaderState.value !is State.DownloadingPlaylist) return@launch
+                    // Download the single video rather than the playlist, so yt-dlp does not
+                    // re-walk every item for each entry.
+                    downloadVideo(videoInfo, preferences).onFailure { th ->
+                        reportItemError(th, videoInfo.originalUrl, isFetchingInfo = false)
                     }
                 }.onFailure { th ->
-                    Log.e(TAG, "syncPlaylists: Failed to fetch video $videoId", th)
-                    manageDownloadError(
-                        th = th,
-                        url = playlistUrl,
-                        title = videoId,
-                        isFetchingInfo = true,
-                        isTaskAborted = false
-                    )
+                    reportItemError(th, playlistUrl, isFetchingInfo = true)
                 }
             }
 
-            Log.d(TAG, "syncPlaylists: Sync complete")
-            ToastUtil.makeToastSuspend("Sync complete: $downloadCount downloaded, ${filesToDelete.size} deleted")
-            NotificationUtil.finishPlaylistNotification(downloadCount, filesToDelete.size)
-            finishProcessing()
+            Log.d(TAG, "syncPlaylists: complete")
+            ToastUtil.showToast(
+                context.getString(R.string.sync_summary, downloadCount, filesToDelete.size)
+            )
+            finishProcessing(downloaded = downloadCount, deleted = filesToDelete.size)
         }
     }
 
-    private fun finishProcessing() {
-        if (downloaderState.value is State.Idle) return
-        mutableTaskState.update {
-            it.copy(progress = 100f, progressText = "")
+    /** A remote video: which playlist it came from, and its 1-based index within it. */
+    private data class VideoSource(val playlistUrl: String, val playlistIndex: Int)
+
+    private data class RemoteVideos(
+        val videos: Map<String, VideoSource>,
+        /** videoId -> normalized title, for matching files downloaded without an id suffix. */
+        val normalizedTitles: Map<String, String>,
+    )
+
+    /** Refreshes stored playlist metadata; failures for one playlist don't stop the rest. */
+    private suspend fun refreshPlaylistMetadata(playlists: List<PlaylistEntry>, apiKey: String) {
+        Log.d(TAG, "refreshPlaylistMetadata: refreshing ${playlists.size} playlists")
+        playlists.forEach { playlist ->
+            runCatching {
+                val playlistId = playlist.playlistId
+                    ?: YouTubeApiService.extractPlaylistId(playlist.url)
+                    ?: return@runCatching
+                val info = YouTubeApiService.getPlaylistInfo(playlistId, apiKey)
+                    ?: return@runCatching
+                DatabaseUtil.updatePlaylist(
+                    playlist.copy(
+                        title = info.title,
+                        thumbnailUrl = info.thumbnailUrl,
+                        videoCount = info.videoCount,
+                        channelTitle = info.channelTitle,
+                        description = info.description,
+                        lastSynced = System.currentTimeMillis(),
+                        playlistId = playlistId
+                    )
+                )
+            }.onFailure {
+                Log.e(TAG, "refreshPlaylistMetadata: failed for ${playlist.title}", it)
+            }
         }
-        clearProgressState(isFinished = true)
+    }
+
+    /**
+     * Enumerates every video in every playlist. Returns null if any playlist failed to
+     * fetch: a partial listing would make step 5 delete files that are still wanted.
+     */
+    private fun fetchRemoteVideos(
+        playlists: List<PlaylistEntry>,
+        preferences: DownloadUtil.DownloadPreferences,
+    ): RemoteVideos? {
+        val videos = mutableMapOf<String, VideoSource>()
+        val normalizedTitles = mutableMapOf<String, String>()
+        var failures = 0
+
+        playlists.forEach { entry ->
+            DownloadUtil.getPlaylistOrVideoInfo(
+                playlistURL = entry.url,
+                downloadPreferences = preferences
+            ).onSuccess { info ->
+                when (info) {
+                    is PlaylistResult -> info.entries.orEmpty()
+                        .forEachIndexed { index, playlistItem ->
+                            val videoId = playlistItem.id ?: return@forEachIndexed
+                            videos[videoId] = VideoSource(entry.url, index + 1)
+                            playlistItem.title?.let { normalizedTitles[videoId] = normalizeName(it) }
+                        }
+
+                    is VideoInfo -> {
+                        videos[info.id] = VideoSource(entry.url, 0)
+                        info.title.takeIf { it.isNotEmpty() }
+                            ?.let { normalizedTitles[info.id] = normalizeName(it) }
+                    }
+                }
+            }.onFailure {
+                failures++
+                Log.e(TAG, "fetchRemoteVideos: failed for '${entry.title}': ${it.message}")
+            }
+        }
+
+        if (failures > 0) {
+            ToastUtil.showToast(
+                context.getString(R.string.sync_fetch_failed, failures)
+            )
+            return null
+        }
+        return RemoteVideos(videos, normalizedTitles)
+    }
+
+    /** Lists audio files in the configured folder, preferring the SAF tree when set. */
+    private fun scanExistingAudioFiles(): List<AudioFileData>? {
+        val uriString = AUDIO_DIRECTORY_URI.getString()
+        if (uriString.isNotEmpty()) {
+            return runCatching {
+                scanAudioFilesWithDocumentFile(context, Uri.parse(uriString))
+                    .filter { !it.name.startsWith(".trashed-") }
+            }.getOrElse {
+                Log.e(TAG, "scanExistingAudioFiles: SAF scan failed", it)
+                ToastUtil.showToast(
+                    context.getString(R.string.sync_scan_failed, it.message.orEmpty())
+                )
+                null
+            }
+        }
+
+        // Legacy path for installs that predate the folder picker.
+        Log.w(TAG, "scanExistingAudioFiles: no SAF URI set, falling back to the File API")
+        val audioDir = File(App.audioDownloadDir).apply { mkdirs() }
+        return audioDir.walkTopDown()
+            .filter {
+                it.isFile &&
+                        it.extension.lowercase() in AUDIO_EXTENSIONS &&
+                        !it.name.startsWith(".trashed-")
+            }
+            .map {
+                AudioFileData(
+                    uri = Uri.fromFile(it),
+                    name = it.name,
+                    size = it.length(),
+                    lastModified = it.lastModified()
+                )
+            }
+            .toList()
+    }
+
+    /** Strips case and punctuation so titles and filenames can be compared. */
+    private fun normalizeName(s: String): String =
+        s.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "")
+
+    @CheckResult
+    private fun downloadVideo(
+        videoInfo: VideoInfo,
+        preferences: DownloadUtil.DownloadPreferences,
+    ): Result<List<String>> {
+        mutableTaskState.update { DownloadTaskItem(title = videoInfo.title) }
+        val taskId = videoInfo.id + preferences.hashCode()
+        Log.d(TAG, "downloadVideo: ${videoInfo.id} ${videoInfo.title}")
+
+        return DownloadUtil.downloadVideo(
+            videoInfo = videoInfo,
+            downloadPreferences = preferences,
+            taskId = taskId
+        ) { progress, _, line ->
+            // Per-item progress goes to the shared service notification counter, not to
+            // a notification of its own, so a sync doesn't spam one per video.
+            mutableTaskState.update { it.copy(progress = progress, progressText = line) }
+        }
+    }
+
+    /**
+     * Ends the run: clears the ongoing notification (leaving a summary when anything
+     * happened) and returns to Idle, which unbinds the foreground service.
+     */
+    private fun finishProcessing(downloaded: Int = 0, deleted: Int = 0) {
+        if (downloaderState.value is State.Idle) return
+        NotificationUtil.finishPlaylistNotification(downloaded, deleted)
+        mutableTaskState.update { it.copy(progress = 100f, progressText = "") }
         updateState(State.Idle)
         clearErrorState()
     }
 
     /**
-     * @param isTaskAborted Determines if the download task is aborted due to the given `Exception`
+     * Records a failure for one playlist item. The sync keeps going: one unavailable
+     * video should not abandon the rest of the run.
      */
-    fun manageDownloadError(
-        th: Throwable,
-        url: String?,
-        title: String? = null,
-        isFetchingInfo: Boolean,
-        isTaskAborted: Boolean = true,
-        notificationId: Int? = null,
-    ) {
+    private fun reportItemError(th: Throwable, url: String?, isFetchingInfo: Boolean) {
         if (th is YoutubeDL.CanceledException) return
         th.printStackTrace()
-        val resId =
-            if (isFetchingInfo) R.string.fetch_info_error_msg else R.string.download_error_msg
-        ToastUtil.makeToastSuspend(context.getString(resId))
-
-        val notificationTitle = title ?: url
-
-        if (isFetchingInfo) {
-            fetchInfoError(url = url.toString(), errorReport = th.message.toString())
-        } else {
-            downloadError(url = url.toString(), errorReport = th.message.toString())
-        }
-
-        notificationId?.let {
-            NotificationUtil.finishNotification(
-                notificationId = it,
-                title = notificationTitle,
-                text = context.getString(R.string.download_error_msg),
+        ToastUtil.showToast(
+            context.getString(
+                if (isFetchingInfo) R.string.fetch_info_error_msg else R.string.download_error_msg
             )
-        }
-        if (isTaskAborted) {
-            updateState(State.Idle)
-            clearProgressState(isFinished = false)
-        }
+        )
 
-    }
-
-    fun cancelDownload() {
-        ToastUtil.makeToast(context.getString(R.string.task_canceled))
-        currentJob?.cancel(CancellationException(context.getString(R.string.task_canceled)))
-        updateState(State.Idle)
-        clearProgressState(isFinished = false)
-        taskState.value.taskId.run {
-            YoutubeDL.destroyProcessById(this)
-            NotificationUtil.cancelNotification(this.toNotificationId())
+        val report = th.message.toString()
+        mutableErrorState.update {
+            if (isFetchingInfo) ErrorState.FetchInfoError(url.toString(), report)
+            else ErrorState.DownloadError(url.toString(), report)
         }
     }
-
-    fun executeCommandWithUrl(url: String) =
-        applicationScope.launch(Dispatchers.IO) {
-            DownloadUtil.executeCommandInBackground(
-                url
-            )
-        }
-
-    fun openDownloadResult() {
-        if (taskState.value.progress == 100f) FileUtil.openFileFromResult(downloadResultTemp)
-    }
-
-    fun onProcessStarted() = mutableProcessCount.update { it + 1 }
 }
-
-// Keep the notification id extension at top-level so other files can import it
-fun String.toNotificationId(): Int = this.hashCode()

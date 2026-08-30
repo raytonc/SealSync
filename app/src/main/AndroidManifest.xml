@@ -50,33 +50,6 @@
             android:exported="false"
             android:label="CrashReportActivity"
             android:theme="@style/Theme.SealSync" />
-        <activity
-            android:name=".QuickDownloadActivity"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:label="@string/title_activity_share"
-            android:launchMode="singleInstance"
-            android:theme="@style/Theme.SealSync.Dialog">
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:mimeType="video/*" />
-                <data android:mimeType="audio/*" />
-            </intent-filter>
-        </activity>
-
         <service
             android:name=".DownloadService"
             android:enabled="true"
@@ -94,24 +67,6 @@
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:mimeType="video/*" />
-                <data android:mimeType="audio/*" />
             </intent-filter>
         </activity>
 
@@ -134,19 +89,17 @@
                 android:resource="@xml/provider_paths" />
         </provider>
 
-        <receiver android:name=".NotificationActionReceiver" />
-
+        <!--
+            Exported so the launcher can start the pinned shortcut, but deliberately without
+            an intent-filter: both the static and pinned shortcuts target this class
+            explicitly, and a VIEW/DEFAULT filter would let any app on the device trigger a
+            sync (which deletes files) with no user interaction.
+        -->
         <activity
             android:name=".ui.shortcut.SyncShortcutActivity"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:theme="@style/Theme.SealSync.TransparentActivity">
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
+            android:theme="@style/Theme.SealSync.TransparentActivity" />
 
         <meta-data
             android:name="android.app.shortcuts"

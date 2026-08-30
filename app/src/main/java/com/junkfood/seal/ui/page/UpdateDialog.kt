@@ -34,42 +34,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 
-@Composable
-fun UpdateDialog(
-    onDismissRequest: () -> Unit,
-    latestRelease: UpdateUtil.LatestRelease,
-) {
-    var currentDownloadStatus by remember { mutableStateOf(UpdateUtil.DownloadStatus.NotYet as UpdateUtil.DownloadStatus) }
-    val context = LocalContext.current
-
-    val scope = rememberCoroutineScope()
-    UpdateDialogImpl(
-        onDismissRequest = onDismissRequest,
-        title = latestRelease.name.toString(),
-        onConfirmUpdate = {
-            scope.launch(Dispatchers.IO) {
-                runCatching {
-                    UpdateUtil.downloadApk(latestRelease = latestRelease)
-                        .collect { downloadStatus ->
-                            currentDownloadStatus = downloadStatus
-                            if (downloadStatus is UpdateUtil.DownloadStatus.Finished) {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                    UpdateUtil.installLatestApk()
-                                }
-                            }
-                        }
-                }.onFailure {
-                    it.printStackTrace()
-                    currentDownloadStatus = UpdateUtil.DownloadStatus.NotYet
-                    ToastUtil.makeToastSuspend(context.getString(R.string.app_update_failed))
-                    return@launch
-                }
-            }
-        },
-        releaseNote = latestRelease.body.toString(),
-        downloadStatus = currentDownloadStatus
-    )
-}
 
 @Composable
 fun UpdateDialogImpl(

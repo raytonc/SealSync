@@ -20,26 +20,18 @@ import coil.ImageLoaderFactory
 import com.google.android.material.color.DynamicColors
 import com.junkfood.seal.ui.common.AudioThumbnailFetcher
 import com.junkfood.seal.ui.common.AudioThumbnailKeyer
-import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.AUDIO_DIRECTORY
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
-import com.junkfood.seal.util.COMMAND_DIRECTORY
 import com.junkfood.seal.util.SETUP_COMPLETED
 import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
-import com.junkfood.seal.util.DownloadUtil
 import com.junkfood.seal.util.FileUtil
-import com.junkfood.seal.util.FileUtil.createEmptyFile
-import com.junkfood.seal.util.FileUtil.getCookiesFile
 import com.junkfood.seal.util.FileUtil.getExternalDownloadDirectory
-import com.junkfood.seal.util.FileUtil.getExternalPrivateDownloadDirectory
 import com.junkfood.seal.util.NotificationUtil
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
-import com.junkfood.seal.util.PreferenceUtil.updateString
 import com.junkfood.seal.util.UpdateUtil
-import com.junkfood.seal.util.VIDEO_DIRECTORY
 import com.junkfood.seal.util.YT_DLP_VERSION
 import com.tencent.mmkv.MMKV
 import com.yausername.aria2c.Aria2c
@@ -51,7 +43,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 @HiltAndroidApp
 class App : Application(), ImageLoaderFactory {
@@ -75,9 +66,6 @@ class App : Application(), ImageLoaderFactory {
                 YoutubeDL.init(this@App)
                 FFmpeg.init(this@App)
                 Aria2c.init(this@App)
-                DownloadUtil.getCookiesContentFromDatabase().getOrNull()?.let {
-                    FileUtil.writeContentToFile(it, getCookiesFile())
-                }
                 UpdateUtil.deleteOutdatedApk()
             } catch (th: Throwable) {
                 withContext(Dispatchers.Main) {
@@ -86,14 +74,7 @@ class App : Application(), ImageLoaderFactory {
             }
         }
 
-        videoDownloadDir = VIDEO_DIRECTORY.getString(
-            getExternalDownloadDirectory().absolutePath
-        )
-
-        audioDownloadDir = AUDIO_DIRECTORY.getString("")
-        if (!PreferenceUtil.containsKey(COMMAND_DIRECTORY)) {
-            COMMAND_DIRECTORY.updateString(videoDownloadDir)
-        }
+        audioDownloadDir = AUDIO_DIRECTORY.getString(getExternalDownloadDirectory().absolutePath)
 
         // Migration logic: If user has already configured settings before setup flow was added,
         // mark setup as completed to avoid showing setup screen to existing users
@@ -144,21 +125,18 @@ class App : Application(), ImageLoaderFactory {
 
     companion object {
         lateinit var clipboard: ClipboardManager
-        lateinit var videoDownloadDir: String
         lateinit var audioDownloadDir: String
         lateinit var applicationScope: CoroutineScope
         lateinit var connectivityManager: ConnectivityManager
         lateinit var packageInfo: PackageInfo
 
-        var isServiceRunning = false
+        private var isServiceRunning = false
         var downloadService: DownloadService? = null
+            private set
 
         private val connection = object : ServiceConnection {
             override fun onServiceConnected(className: ComponentName, service: IBinder) {
-                @Suppress("UNCHECKED_CAST")
-                val binder = service as DownloadService.DownloadServiceBinder
-                downloadService = binder.getService()
-                isServiceRunning = true
+                downloadService = (service as DownloadService.DownloadServiceBinder).getService()
             }
 
             override fun onServiceDisconnected(arg0: ComponentName) {
@@ -166,59 +144,48 @@ class App : Application(), ImageLoaderFactory {
             }
         }
 
+        /** Binds the download service so a sync survives the app being backgrounded. */
         fun startService() {
             if (isServiceRunning) return
-            Intent(context.applicationContext, DownloadService::class.java).also { intent ->
-                context.bindService(intent, connection, BIND_AUTO_CREATE)
+            isServiceRunning = true
+            val appContext = context.applicationContext
+            Intent(appContext, DownloadService::class.java).also { intent ->
+                // The service goes foreground in onCreate, so startForegroundService is safe here.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(intent)
+                } else {
+                    appContext.startService(intent)
+                }
+                appContext.bindService(intent, connection, BIND_AUTO_CREATE)
             }
         }
 
         fun stopService() {
             if (!isServiceRunning) return
-            try {
-                isServiceRunning = false
-                context.applicationContext.run {
-                    unbindService(connection)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            isServiceRunning = false
+            downloadService = null
+            runCatching { context.applicationContext.unbindService(connection) }
+                .onFailure { it.printStackTrace() }
         }
 
+        /**
+         * Records the folder the user picked for audio. The SAF tree URI is what actually
+         * gets read and written; the resolved filesystem path is kept alongside it for
+         * display and for the legacy File-API scan path.
+         */
+        fun updateDownloadDir(uri: Uri) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }.onFailure { Log.e(TAG, "updateDownloadDir: could not persist URI permission", it) }
 
-        val privateDownloadDir: String
-            get() = getExternalPrivateDownloadDirectory().run {
-                createEmptyFile(".nomedia")
-                absolutePath
-            }
-
-        fun updateDownloadDir(uri: Uri, directoryType: Directory) {
-            when (directoryType) {
-                Directory.AUDIO -> {
-                    Log.d(TAG, "updateDownloadDir: Received URI: $uri")
-
-                    // Persist URI permission so we can access it later
-                    try {
-                        context.contentResolver.takePersistableUriPermission(
-                            uri,
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                        )
-                        Log.d(TAG, "updateDownloadDir: Successfully persisted URI permission")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "updateDownloadDir: Failed to persist URI permission", e)
-                    }
-
-                    // Store the URI (primary method for SAF)
-                    PreferenceUtil.encodeString(AUDIO_DIRECTORY_URI, uri.toString())
-                    Log.d(TAG, "updateDownloadDir: Stored URI: $uri")
-
-                    // Also store the path (for display purposes and legacy compatibility)
-                    val path = FileUtil.getRealPath(uri)
-                    Log.d(TAG, "updateDownloadDir: Converted path: $path")
-                    audioDownloadDir = path
-                    PreferenceUtil.encodeString(AUDIO_DIRECTORY, path)
-                }
-            }
+            PreferenceUtil.encodeString(AUDIO_DIRECTORY_URI, uri.toString())
+            val path = FileUtil.getRealPath(uri)
+            Log.d(TAG, "updateDownloadDir: $uri -> $path")
+            audioDownloadDir = path
+            PreferenceUtil.encodeString(AUDIO_DIRECTORY, path)
         }
 
         private const val TAG = "App"

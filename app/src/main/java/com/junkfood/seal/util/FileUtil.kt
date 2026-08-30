@@ -1,33 +1,29 @@
 package com.junkfood.seal.util
 
-import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
-import android.provider.DocumentsContract
 import android.util.Log
-import android.webkit.MimeTypeMap
 import androidx.annotation.CheckResult
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import com.junkfood.seal.App.Companion.context
-import com.junkfood.seal.R
-import okhttp3.internal.closeQuietly
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 
-const val AUDIO_REGEX = "(mp3|aac|opus|m4a|wav)$"
-const val THUMBNAIL_REGEX = "\\.(jpg|png)$"
-const val SUBTITLE_REGEX = "\\.(lrc|vtt|srt|ass|json3|srv.|ttml)$"
-private const val PRIVATE_DIRECTORY_SUFFIX = ".SealSync"
+private const val TAG = "FileUtil"
 
-/**
- * Data class to hold audio file information from DocumentFile scanning
- */
+/** Extensions yt-dlp may produce for extracted audio. */
+private val AUDIO_EXTENSIONS =
+    setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
+
+/** Sidecar files written by the download's thumbnail/metadata options. */
+private val THUMBNAIL_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp")
+
 data class AudioFileData(
     val uri: Uri,
     val name: String,
@@ -36,238 +32,128 @@ data class AudioFileData(
 )
 
 /**
- * Scans a directory tree using Storage Access Framework (DocumentFile)
- * This works with scoped storage and doesn't require broad storage permissions
+ * Recursively lists audio files under a SAF tree URI. Used instead of the File API so
+ * the app keeps working under scoped storage without broad storage permissions.
  */
 fun scanAudioFilesWithDocumentFile(context: Context, treeUri: Uri): List<AudioFileData> {
-    val audioExtensions = setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
-    val files = mutableListOf<AudioFileData>()
-
     val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
     if (rootDoc == null) {
-        Log.e("FileUtil", "scanAudioFilesWithDocumentFile: Failed to create DocumentFile from URI: $treeUri")
+        Log.e(TAG, "scanAudioFiles: could not open tree URI $treeUri")
         return emptyList()
     }
 
-    Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Starting scan of $treeUri")
+    val files = mutableListOf<AudioFileData>()
 
     fun scanRecursively(doc: DocumentFile) {
-        try {
+        runCatching {
             doc.listFiles().forEach { file ->
-                when {
-                    file.isDirectory -> {
-                        Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Entering directory: ${file.name}")
-                        scanRecursively(file)
-                    }
-                    file.isFile -> {
-                        val name = file.name ?: return@forEach
-                        if (name.startsWith(".trashed-")) {
-                            return@forEach  // Skip trashed files
-                        }
-
-                        val ext = name.substringAfterLast('.', "").lowercase()
-
-                        if (ext in audioExtensions) {
-                            files.add(AudioFileData(
-                                uri = file.uri,
-                                name = name,
-                                size = file.length(),
-                                lastModified = file.lastModified()
-                            ))
-                            Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Found audio file: $name")
-                        }
-                    }
+                if (file.isDirectory) {
+                    scanRecursively(file)
+                    return@forEach
                 }
+                if (!file.isFile) return@forEach
+
+                val name = file.name ?: return@forEach
+                // Files the user deleted are kept around by the system with this prefix.
+                if (name.startsWith(".trashed-")) return@forEach
+                if (name.substringAfterLast('.', "").lowercase() !in AUDIO_EXTENSIONS) return@forEach
+
+                files.add(
+                    AudioFileData(
+                        uri = file.uri,
+                        name = name,
+                        size = file.length(),
+                        lastModified = file.lastModified()
+                    )
+                )
             }
-        } catch (e: Exception) {
-            Log.e("FileUtil", "scanAudioFilesWithDocumentFile: Error scanning directory ${doc.name}", e)
-        }
+        }.onFailure { Log.e(TAG, "scanAudioFiles: error scanning ${doc.name}", it) }
     }
 
     scanRecursively(rootDoc)
-    Log.d("FileUtil", "scanAudioFilesWithDocumentFile: Scan complete, found ${files.size} audio files")
+    Log.d(TAG, "scanAudioFiles: found ${files.size} audio files under $treeUri")
     return files
 }
 
-/**
- * Extracts embedded thumbnail (album art) from an audio file using MediaMetadataRetriever
- * Works with both file paths and content URIs (SAF)
- */
+/** Reads the album art embedded in an audio file. Works for both file and content URIs. */
 fun extractEmbeddedThumbnail(context: Context, uri: Uri): ByteArray? {
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, uri)
-        val thumbnail = retriever.embeddedPicture
-        Log.d("FileUtil", "extractEmbeddedThumbnail: ${if (thumbnail != null) "Found" else "No"} embedded thumbnail for $uri")
-        thumbnail
+        retriever.embeddedPicture
     } catch (e: Exception) {
-        Log.e("FileUtil", "extractEmbeddedThumbnail: Failed to extract thumbnail from $uri", e)
+        Log.e(TAG, "extractEmbeddedThumbnail: failed for $uri", e)
         null
     } finally {
-        try {
-            retriever.release()
-        } catch (e: Exception) {
-            Log.e("FileUtil", "extractEmbeddedThumbnail: Failed to release retriever", e)
-        }
+        runCatching { retriever.release() }
     }
 }
 
-/**
- * Caches an embedded thumbnail to app's files directory and returns the file path
- * Uses MD5 hash of URI as filename to avoid conflicts
- */
-fun cacheEmbeddedThumbnail(context: Context, uri: Uri, thumbnailBytes: ByteArray): String? {
-    return try {
-        // Create thumbnails directory in app's files directory
-        val thumbnailsDir = File(context.filesDir, "thumbnails")
-        if (!thumbnailsDir.exists()) {
-            thumbnailsDir.mkdirs()
-        }
-
-        // Generate unique filename from URI hash
-        val md5 = MessageDigest.getInstance("MD5")
-        val hash = md5.digest(uri.toString().toByteArray())
-        val hashString = hash.joinToString("") { "%02x".format(it) }
-        val thumbnailFile = File(thumbnailsDir, "$hashString.jpg")
-
-        // Write thumbnail to file if it doesn't exist
-        if (!thumbnailFile.exists()) {
-            FileOutputStream(thumbnailFile).use { output ->
-                output.write(thumbnailBytes)
-            }
-            Log.d("FileUtil", "cacheEmbeddedThumbnail: Cached thumbnail to ${thumbnailFile.absolutePath}")
-        } else {
-            Log.d("FileUtil", "cacheEmbeddedThumbnail: Thumbnail already cached at ${thumbnailFile.absolutePath}")
-        }
-
-        thumbnailFile.absolutePath
-    } catch (e: Exception) {
-        Log.e("FileUtil", "cacheEmbeddedThumbnail: Failed to cache thumbnail for $uri", e)
-        null
-    }
+/** Path a given source URI's cached thumbnail would occupy, hashed to avoid collisions. */
+private fun thumbnailCacheFile(context: Context, uri: Uri): File {
+    val hash = MessageDigest.getInstance("MD5")
+        .digest(uri.toString().toByteArray())
+        .joinToString("") { "%02x".format(it) }
+    return File(File(context.filesDir, "thumbnails"), "$hash.jpg")
 }
 
-/**
- * Checks if a cached thumbnail exists for the given URI without extracting
- * Returns the file path if cached, null otherwise
- * This is a fast path that avoids expensive extraction operations
- */
-fun getCachedThumbnailPath(context: Context, uri: Uri): String? {
-    return try {
-        val thumbnailsDir = File(context.filesDir, "thumbnails")
-        if (!thumbnailsDir.exists()) {
-            return null
+fun cacheEmbeddedThumbnail(context: Context, uri: Uri, thumbnailBytes: ByteArray): String? =
+    runCatching {
+        val file = thumbnailCacheFile(context, uri)
+        if (!file.exists()) {
+            file.parentFile?.mkdirs()
+            FileOutputStream(file).use { it.write(thumbnailBytes) }
         }
-
-        // Generate the same filename that would be used for caching
-        val md5 = MessageDigest.getInstance("MD5")
-        val hash = md5.digest(uri.toString().toByteArray())
-        val hashString = hash.joinToString("") { "%02x".format(it) }
-        val thumbnailFile = File(thumbnailsDir, "$hashString.jpg")
-
-        if (thumbnailFile.exists()) {
-            thumbnailFile.absolutePath
-        } else {
-            null
-        }
-    } catch (e: Exception) {
-        Log.e("FileUtil", "getCachedThumbnailPath: Failed to check cache for $uri", e)
-        null
-    }
-}
+        file.absolutePath
+    }.onFailure { Log.e(TAG, "cacheEmbeddedThumbnail: failed for $uri", it) }.getOrNull()
 
 /**
- * Extracts and caches embedded thumbnail from audio file, returns cached file path
- * This is a convenience function combining extraction and caching
+ * Fast path for the image loader: returns an already-cached thumbnail's path without
+ * paying for extraction, or null when nothing is cached yet.
  */
-fun getEmbeddedThumbnailPath(context: Context, uri: Uri): String? {
-    val thumbnailBytes = extractEmbeddedThumbnail(context, uri) ?: return null
-    return cacheEmbeddedThumbnail(context, uri, thumbnailBytes)
-}
+fun getCachedThumbnailPath(context: Context, uri: Uri): String? =
+    runCatching { thumbnailCacheFile(context, uri).takeIf { it.exists() }?.absolutePath }
+        .onFailure { Log.e(TAG, "getCachedThumbnailPath: failed for $uri", it) }
+        .getOrNull()
 
 object FileUtil {
-    fun openFileFromResult(downloadResult: Result<List<String>>) {
-        val filePaths = downloadResult.getOrNull()
-        if (filePaths.isNullOrEmpty()) return
-        openFile(filePaths.first()) {
-            ToastUtil.makeToastSuspend(context.getString(R.string.file_unavailable))
-        }
-    }
-
     inline fun openFile(path: String, onFailureCallback: (Throwable) -> Unit) =
         path.runCatching {
             createIntentForOpeningFile(this)?.run { context.startActivity(this) }
-                ?: throw Exception()
-        }.onFailure {
-            onFailureCallback(it)
-        }
+                ?: throw Exception("no viewer intent for $this")
+        }.onFailure(onFailureCallback)
 
-    private fun createIntentForFile(path: String?): Intent? {
+    fun createIntentForOpeningFile(path: String?): Intent? {
         if (path == null) return null
 
         val uri = path.runCatching {
             DocumentFile.fromSingleUri(context, Uri.parse(path)).run {
-                if (this?.exists() == true) {
-                    this.uri
-                } else if (File(this@runCatching).exists()) {
-                    FileProvider.getUriForFile(
-                        context,
-                        context.getFileProvider(),
-                        File(this@runCatching)
-                    )
-                } else null
+                if (this?.exists() == true) uri
+                else if (File(this@runCatching).exists()) FileProvider.getUriForFile(
+                    context, context.getFileProvider(), File(this@runCatching)
+                )
+                else null
             }
         }.getOrNull() ?: return null
 
-        return Intent().apply {
-            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        return Intent(Intent.ACTION_VIEW).apply {
             data = uri
+            // Required because we start this from the application context.
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-    }
-
-    fun createIntentForOpeningFile(path: String?): Intent? = createIntentForFile(path)?.let {
-        it.apply {
-            action = (Intent.ACTION_VIEW)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-    }
-
-    fun createIntentForSharingFile(path: String?): Intent? = createIntentForFile(path)?.apply {
-        action = Intent.ACTION_SEND
-        putExtra(Intent.EXTRA_STREAM, data)
-        val mimeType = data?.let { context.contentResolver.getType(it) } ?: "media/*"
-        setDataAndType(this.data, mimeType)
-        clipData = ClipData(
-            null,
-            arrayOf(mimeType),
-            ClipData.Item(data)
-        )
     }
 
     fun Context.getFileProvider() = "$packageName.provider"
 
-    fun String.getFileSize(): Long = this.run {
-        val length = File(this).length()
-        if (length == 0L)
-            DocumentFile.fromSingleUri(context, Uri.parse(this))?.length() ?: 0L
-        else length
-    }
-
-    fun String.getFileName(): String = this.run {
-        File(this).nameWithoutExtension.ifEmpty {
-            DocumentFile.fromSingleUri(
-                context,
-                Uri.parse(this)
-            )?.name ?: "video"
-        }
-    }
-
     fun deleteFile(path: String) =
         path.runCatching {
-            if (!File(path).delete())
-                DocumentFile.fromSingleUri(context, Uri.parse(this))?.delete()
+            if (!File(path).delete()) DocumentFile.fromSingleUri(context, Uri.parse(this))?.delete()
         }
 
+    /**
+     * Registers a finished download with the system media library and returns the media
+     * files it produced, excluding the thumbnail sidecars.
+     */
     @CheckResult
     fun scanFileToMediaLibraryPostDownload(title: String, downloadDir: String): List<String> =
         File(downloadDir)
@@ -276,135 +162,45 @@ object FileUtil {
             .map { it.absolutePath }
             .toMutableList()
             .apply {
-                MediaScannerConnection.scanFile(
-                    context, this.toList().toTypedArray(),
-                    null, null
-                )
-                removeAll { it.contains(Regex(THUMBNAIL_REGEX)) || it.contains(Regex(SUBTITLE_REGEX)) }
+                MediaScannerConnection.scanFile(context, toTypedArray(), null, null)
+                removeAll { path ->
+                    path.substringAfterLast('.', "").lowercase() in THUMBNAIL_EXTENSIONS
+                }
             }
-
-
-    fun scanDownloadDirectoryToMediaLibrary(downloadDir: String) =
-        File(downloadDir).walkTopDown().filter { it.isFile }.map { it.absolutePath }.run {
-            MediaScannerConnection.scanFile(
-                context, this.toList().toTypedArray(),
-                null, null
-            )
-        }
-
-
-    @CheckResult
-    fun moveFilesToSdcard(
-        tempPath: File,
-        sdcardUri: String
-    ): Result<List<String>> {
-        val uriList = mutableListOf<String>()
-        val destDir = Uri.parse(sdcardUri).run {
-            DocumentsContract.buildDocumentUriUsingTree(
-                this,
-                DocumentsContract.getTreeDocumentId(this)
-            )
-        }
-        val res = tempPath.runCatching {
-            walkTopDown().forEach {
-                if (it.isDirectory) return@forEach
-                val mimeType =
-                    MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.extension) ?: "*/*"
-
-                val destUri = DocumentsContract.createDocument(
-                    context.contentResolver,
-                    destDir,
-                    mimeType,
-                    it.name
-                ) ?: return@forEach
-
-                val inputStream = it.inputStream()
-                val outputStream =
-                    context.contentResolver.openOutputStream(destUri) ?: return@forEach
-                inputStream.copyTo(outputStream)
-                inputStream.closeQuietly()
-                outputStream.closeQuietly()
-                uriList.add(destUri.toString())
-            }
-            uriList
-        }
-        tempPath.deleteRecursively()
-        return res
-    }
-
-    fun clearTempFiles(downloadDir: File): Int {
-        var count = 0
-        downloadDir.walkTopDown().forEach {
-            if (it.isFile && !it.isHidden) {
-                if (it.delete())
-                    count++
-            }
-        }
-        return count
-    }
 
     fun Context.getConfigDirectory(): File = cacheDir
 
-    fun Context.getConfigFile(suffix: String = "") =
-        File(getConfigDirectory(), "config$suffix.txt")
-
-    fun Context.getCookiesFile() =
-        File(getConfigDirectory(), "cookies.txt")
+    fun Context.getConfigFile(suffix: String = "") = File(getConfigDirectory(), "config$suffix.txt")
 
     fun getExternalTempDir() = File(getExternalDownloadDirectory(), "tmp").apply {
         mkdirs()
-        createEmptyFile(".nomedia")
+        // Keeps in-progress downloads out of the user's gallery and music apps.
+        runCatching { resolve(".nomedia").createNewFile() }
     }
-
-    fun Context.getSdcardTempDir(child: String?): File = getExternalTempDir().run {
-        child?.let { resolve(it) } ?: this
-    }
-
-    fun Context.getArchiveFile(): File =
-        filesDir.createEmptyFile("archive.txt").getOrThrow()
-
-    fun Context.getInternalTempDir() = File(filesDir, "tmp")
 
     internal fun getExternalDownloadDirectory() = File(
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
         "SealSync"
-    ).also { it.mkdir() }
-
-    internal fun getExternalPrivateDownloadDirectory() = File(
-        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-        PRIVATE_DIRECTORY_SUFFIX
-    )
-
-
-    fun File.createEmptyFile(fileName: String): Result<File> = this.runCatching {
-        mkdirs()
-        resolve(fileName).apply {
-            this@apply.createNewFile()
-        }
-    }.onFailure { it.printStackTrace() }
-
+    ).also { it.mkdirs() }
 
     fun writeContentToFile(content: String, file: File): File = file.apply { writeText(content) }
 
+    /**
+     * Best-effort conversion of a SAF tree URI to a filesystem path, for display and for
+     * handing yt-dlp an output directory. Only primary (internal) storage is supported;
+     * anything else falls back to the app's own download folder.
+     */
     fun getRealPath(treeUri: Uri): String {
         val path: String = treeUri.path.toString()
-        Log.d(TAG, "getRealPath: Input URI: $treeUri")
-        Log.d(TAG, "getRealPath: URI path: $path")
 
         if (!path.contains("primary:")) {
             val fallback = getExternalDownloadDirectory().absolutePath
-            Log.e(TAG, "getRealPath: URI does not contain 'primary:', falling back to: $fallback")
-            ToastUtil.makeToast("This directory is not supported. Using default directory.")
+            Log.e(TAG, "getRealPath: $treeUri is not on primary storage, falling back to $fallback")
+            ToastUtil.showToast(context.getString(com.junkfood.seal.R.string.directory_unsupported))
             return fallback
         }
 
         val last: String = path.split("primary:").last()
-        val realPath = Environment.getExternalStorageDirectory().absolutePath + "/$last"
-        Log.d(TAG, "getRealPath: Converted to real path: $realPath")
-
-        return realPath
+        return Environment.getExternalStorageDirectory().absolutePath + "/$last"
     }
-
-
-    private const val TAG = "FileUtil"
 }

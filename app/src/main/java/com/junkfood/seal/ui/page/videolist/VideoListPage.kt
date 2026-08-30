@@ -1,18 +1,14 @@
 package com.junkfood.seal.ui.page.videolist
 
 import VideoStreamSVG
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,8 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.junkfood.seal.App
 import com.junkfood.seal.R
-import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.ui.common.AsyncImageImpl
+import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.common.SVGImage
 import com.junkfood.seal.ui.component.BackButton
@@ -67,9 +63,7 @@ import com.junkfood.seal.ui.component.ConfirmButton
 import com.junkfood.seal.ui.component.DismissButton
 import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.ui.component.SealDialog
-import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.FileUtil
-import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.toFileSizeText
 import java.text.SimpleDateFormat
@@ -84,23 +78,6 @@ fun VideoListPage(
 ) {
     val audioFiles by viewModel.audioFilesFlow.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
-
-    // Directory picker launcher
-    val dirLauncher =
-        rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
-            override fun createIntent(context: Context, input: Uri?): Intent {
-                return (super.createIntent(context, input)).apply {
-                    flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                }
-            }
-        }) { uri: Uri? ->
-            uri?.let {
-                App.updateDownloadDir(it, Directory.AUDIO)
-                viewModel.refreshFileList()
-            }
-        }
 
     // Rescan every time page is shown
     LaunchedEffect(Unit) {
@@ -261,10 +238,10 @@ fun VideoListPage(
                                     ?: fileInfo.file?.absolutePath
                                 if (path != null) {
                                     FileUtil.openFile(path = path) {
-                                        ToastUtil.makeToastSuspend(App.context.getString(R.string.file_unavailable))
+                                        ToastUtil.showToast(App.context.getString(R.string.file_unavailable))
                                     }
                                 } else {
-                                    ToastUtil.makeToastSuspend(App.context.getString(R.string.file_unavailable))
+                                    ToastUtil.showToast(App.context.getString(R.string.file_unavailable))
                                 }
                             }
                         },
@@ -334,6 +311,7 @@ fun VideoListPage(
 
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AudioFileItem(
     fileInfo: AudioFileInfo,
@@ -341,7 +319,7 @@ fun AudioFileItem(
     isSelected: Boolean,
     onSelect: () -> Unit,
     onClick: () -> Unit,
-    @Suppress("UNUSED_PARAMETER") onLongClick: () -> Unit,
+    onLongClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
     val view = LocalView.current
@@ -351,10 +329,16 @@ fun AudioFileItem(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clickable {
-                view.slightHapticFeedback()
-                onClick()
-            },
+            .combinedClickable(
+                onClick = {
+                    view.slightHapticFeedback()
+                    onClick()
+                },
+                onLongClick = {
+                    view.longPressHapticFeedback()
+                    onLongClick()
+                }
+            ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(

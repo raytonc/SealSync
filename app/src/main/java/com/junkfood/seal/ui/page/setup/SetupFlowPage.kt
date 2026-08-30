@@ -44,7 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.App
-import com.junkfood.seal.ui.page.settings.general.Directory
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.NOTIFICATION
 import com.junkfood.seal.util.PreferenceUtil
@@ -106,7 +105,7 @@ fun SetupFlowPage(
         }
     ) { uri: Uri? ->
         uri?.let {
-            App.updateDownloadDir(it, Directory.AUDIO)
+            App.updateDownloadDir(it)
             folderSelected = true
         }
     }

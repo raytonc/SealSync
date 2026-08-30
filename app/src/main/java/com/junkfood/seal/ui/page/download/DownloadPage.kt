@@ -27,7 +27,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.PlaylistPlay
+import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Subscriptions
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -84,6 +84,7 @@ import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.component.NavigationBarSpacer
+import com.junkfood.seal.util.CELLULAR_DOWNLOAD
 import com.junkfood.seal.util.NOTIFICATION
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
@@ -99,7 +100,6 @@ import java.util.Locale
 fun DownloadPage(
     navigateToSettings: () -> Unit = {},
     navigateToDownloads: () -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") downloadViewModel: DownloadViewModel = hiltViewModel(),
     playlistViewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val view = LocalView.current
@@ -146,7 +146,7 @@ fun DownloadPage(
             return@downloadAllCallback
         }
         if (playlists.isEmpty()) {
-            ToastUtil.makeToast("No playlists to download")
+            ToastUtil.makeToast(R.string.sync_no_playlists)
             return@downloadAllCallback
         }
         checkPermissionOrDownload()
@@ -160,6 +160,8 @@ fun DownloadPage(
                 showMeteredNetworkDialog = false
             },
             onAllowAlwaysConfirm = {
+                // Persist the choice, otherwise "always" behaves the same as "once".
+                CELLULAR_DOWNLOAD.updateBoolean(true)
                 Downloader.syncPlaylists(playlists)
                 showMeteredNetworkDialog = false
             }
@@ -376,7 +378,7 @@ fun PlaylistItem(
                         contentScale = ContentScale.Crop
                     )
                 } ?: Icon(
-                    imageVector = Icons.Outlined.PlaylistPlay,
+                    imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
                     contentDescription = null,
                     modifier = Modifier
                         .fillMaxSize()
@@ -705,7 +707,7 @@ fun ChannelPlaylistItem(
                     )
                 } else {
                     Icon(
-                        imageVector = Icons.Outlined.PlaylistPlay,
+                        imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
                         contentDescription = null,
                         modifier = Modifier.size(32.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
@@ -749,50 +751,6 @@ fun ChannelPlaylistItem(
     }
 }
 
-@Composable
-fun TitleWithProgressIndicator(
-    showProgressIndicator: Boolean = true,
-    showDownloadText: Boolean = true,
-    isDownloadingPlaylist: Boolean = true,
-    currentIndex: Int = 1,
-    downloadItemCount: Int = 4,
-) {
-    Column(modifier = Modifier.padding(start = 12.dp, top = 24.dp)) {
-        Row(
-            modifier = Modifier
-                .clip(MaterialTheme.shapes.extraLarge)
-                .padding(horizontal = 12.dp)
-                .padding(top = 12.dp, bottom = 3.dp)
-        ) {
-            Text(
-                modifier = Modifier,
-                text = stringResource(R.string.app_name),
-                style = MaterialTheme.typography.displaySmall
-            )
-            AnimatedVisibility(visible = showProgressIndicator) {
-                Column(
-                    modifier = Modifier.padding(start = 12.dp)
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp), strokeWidth = 3.dp
-                    )
-                }
-            }
-        }
-        AnimatedVisibility(visible = showDownloadText) {
-            Text(
-                if (isDownloadingPlaylist) stringResource(R.string.playlist_indicator_text).format(
-                    currentIndex,
-                    downloadItemCount
-                )
-                else stringResource(R.string.downloading_indicator_text),
-                modifier = Modifier.padding(start = 12.dp, top = 3.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
 
 @Composable
 fun ErrorMessage(
