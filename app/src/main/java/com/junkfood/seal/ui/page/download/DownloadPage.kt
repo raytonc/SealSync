@@ -4,6 +4,12 @@ import android.Manifest
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,44 +30,51 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Error
-import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.LibraryMusic
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Subscriptions
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
@@ -83,17 +96,29 @@ import com.junkfood.seal.R
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
+import com.junkfood.seal.ui.component.EmptyLibraryState
+import com.junkfood.seal.ui.component.LibraryHeader
+import com.junkfood.seal.ui.component.MissingApiKeyBanner
 import com.junkfood.seal.ui.component.NavigationBarSpacer
+import com.junkfood.seal.ui.component.PlaylistRow
+import com.junkfood.seal.ui.component.PlaylistSyncState
+import com.junkfood.seal.ui.component.SwipeToRemove
+import com.junkfood.seal.ui.component.SyncProgressCard
+import com.junkfood.seal.ui.component.SyncSummaryCard
+import com.junkfood.seal.ui.theme.ArtworkShape
 import com.junkfood.seal.util.CELLULAR_DOWNLOAD
-import com.junkfood.seal.util.NOTIFICATION
 import com.junkfood.seal.util.PreferenceUtil
-import com.junkfood.seal.util.PreferenceUtil.getBoolean
+import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.ToastUtil
+import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YouTubeApiService
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -105,6 +130,8 @@ fun DownloadPage(
     val view = LocalView.current
     val clipboardManager = LocalClipboardManager.current
     val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
+    val taskState by Downloader.taskState.collectAsStateWithLifecycle()
+    val syncResult by Downloader.syncResult.collectAsStateWithLifecycle()
     val errorState by Downloader.errorState.collectAsStateWithLifecycle()
     val playlists by playlistViewModel.playlistsFlow.collectAsStateWithLifecycle()
     val addPlaylistState by playlistViewModel.addPlaylistState.collectAsStateWithLifecycle()
@@ -113,6 +140,35 @@ fun DownloadPage(
     var showAddPlaylistDialog by rememberSaveable { mutableStateOf(false) }
     var showChannelPlaylistsDialog by rememberSaveable { mutableStateOf(false) }
     var showMeteredNetworkDialog by remember { mutableStateOf(false) }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+
+    val isSyncing = downloaderState is Downloader.State.DownloadingPlaylist
+
+    // The key lives outside the observable settings flow, and the only way to set it is the
+    // Settings screen, so re-read it whenever this screen comes back to the foreground.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var hasApiKey by remember { mutableStateOf(YOUTUBE_API_KEY.getString().isNotBlank()) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasApiKey = YOUTUBE_API_KEY.getString().isNotBlank()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // A finished sync deserves a moment of acknowledgement, then it gets out of the way.
+    LaunchedEffect(syncResult) {
+        if (syncResult != null) {
+            view.slightHapticFeedback()
+            delay(6000)
+            Downloader.clearSyncResult()
+        }
+    }
 
     val checkNetworkOrDownload = {
         if (!PreferenceUtil.isNetworkAvailableForDownload()) {
@@ -142,11 +198,16 @@ fun DownloadPage(
 
     val downloadAllCallback = downloadAllCallback@{
         view.slightHapticFeedback()
-        if (downloaderState is Downloader.State.DownloadingPlaylist) {
+        // Tapping the button mid-sync now stops the run instead of doing nothing at all,
+        // which used to read as the app being frozen.
+        if (isSyncing) {
+            Downloader.cancelSync()
             return@downloadAllCallback
         }
         if (playlists.isEmpty()) {
-            ToastUtil.makeToast(R.string.sync_no_playlists)
+            scope.launch {
+                snackbarHostState.showSnackbar("Add a playlist first")
+            }
             return@downloadAllCallback
         }
         checkPermissionOrDownload()
@@ -188,7 +249,12 @@ fun DownloadPage(
                 playlistViewModel.resetChannelPlaylistsState()
             },
             onPlaylistSelected = { channelPlaylist ->
+                view.slightHapticFeedback()
                 playlistViewModel.addPlaylistFromChannel(channelPlaylist)
+            },
+            onPlaylistDeselected = { channelPlaylist ->
+                view.slightHapticFeedback()
+                playlistViewModel.removePlaylistByChannelId(channelPlaylist.id)
             },
             channelPlaylistsState = channelPlaylistsState,
             onFetch = {
@@ -199,12 +265,34 @@ fun DownloadPage(
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = {},
-                modifier = Modifier.padding(horizontal = 8.dp),
-                navigationIcon = {
+                title = { Text(text = stringResource(id = R.string.app_name)) },
+                scrollBehavior = scrollBehavior,
+                // No navigation icon: this is the root screen, and the leading slot is
+                // where up/back belongs. Both tools live together on the trailing side.
+                actions = {
+                    TooltipBox(
+                        state = rememberTooltipState(),
+                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.downloads_history)) } }
+                    ) {
+                        IconButton(
+                            onClick = {
+                                view.slightHapticFeedback()
+                                navigateToDownloads()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.LibraryMusic,
+                                contentDescription = stringResource(id = R.string.downloads_history)
+                            )
+                        }
+                    }
                     TooltipBox(
                         state = rememberTooltipState(),
                         positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
@@ -222,265 +310,219 @@ fun DownloadPage(
                             )
                         }
                     }
-                },
-                actions = {
-                    TooltipBox(
-                        state = rememberTooltipState(),
-                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.downloads_history)) } }
-                    ) {
-                        IconButton(
-                            onClick = {
-                                view.slightHapticFeedback()
-                                navigateToDownloads()
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Subscriptions,
-                                contentDescription = stringResource(id = R.string.downloads_history)
-                            )
-                        }
-                    }
                 }
             )
         },
         floatingActionButton = {
-            Column(
-                modifier = Modifier
-                    .padding(6.dp)
-                    .imePadding(),
-                horizontalAlignment = Alignment.End
-            ) {
-                ExtendedFloatingActionButton(
-                    onClick = { showChannelPlaylistsDialog = true },
-                    icon = {
-                        Icon(
-                            Icons.Outlined.Subscriptions,
-                            contentDescription = "Add Playlists from Channel"
-                        )
-                    },
-                    text = { Text("Add from Channel") },
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-                ExtendedFloatingActionButton(
-                    onClick = { showAddPlaylistDialog = true },
-                    icon = { Icon(Icons.Filled.Add, contentDescription = "Add Playlist by URL") },
-                    text = { Text("Add Playlist by URL") },
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-                val isSyncing = downloaderState is Downloader.State.DownloadingPlaylist
-                ExtendedFloatingActionButton(
-                    onClick = downloadAllCallback,
-                    icon = { Icon(Icons.Outlined.DownloadForOffline, contentDescription = "Sync") },
-                    text = { Text("Sync folder") },
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    containerColor = if (isSyncing) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = if (isSyncing) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
+            SyncFabStack(
+                isSyncing = isSyncing,
+                hasPlaylists = playlists.isNotEmpty(),
+                onAddByUrl = {
+                    view.slightHapticFeedback()
+                    showAddPlaylistDialog = true
+                },
+                onAddFromChannel = {
+                    view.slightHapticFeedback()
+                    showChannelPlaylistsDialog = true
+                },
+                onSync = downloadAllCallback,
+            )
         }
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.padding(horizontal = 24.dp)) {
-                    AnimatedVisibility(visible = errorState != Downloader.ErrorState.None) {
-                        ErrorMessage(
-                            title = errorState.title,
-                            errorReport = errorState.report
-                        ) {
-                            view.longPressHapticFeedback()
-                            clipboardManager.setText(
-                                AnnotatedString(App.getVersionReport() + "\nURL: ${errorState.url}\n${errorState.report}")
-                            )
-                            ToastUtil.makeToast(R.string.error_copied)
-                        }
+            // Status region: sync progress, the post-run summary, missing key, and errors.
+            // Animated so these appear and leave rather than snapping in.
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                AnimatedVisibility(
+                    visible = isSyncing,
+                    enter = fadeIn() + expandVertically(
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy)
+                    ),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    val state = downloaderState as? Downloader.State.DownloadingPlaylist
+                    SyncProgressCard(
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        currentItem = state?.currentItem ?: 0,
+                        itemCount = state?.itemCount ?: 0,
+                        currentTitle = taskState.title,
+                        // The downloader reports 0..100; the bar wants 0..1.
+                        itemProgress = taskState.progress / 100f,
+                        onCancel = {
+                            view.slightHapticFeedback()
+                            Downloader.cancelSync()
+                        },
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = syncResult != null && !isSyncing,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    syncResult?.let { result ->
+                        SyncSummaryCard(
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                            downloaded = result.downloaded,
+                            deleted = result.deleted,
+                            onDismiss = { Downloader.clearSyncResult() },
+                        )
                     }
                 }
 
-                if (playlists.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                AnimatedVisibility(visible = !hasApiKey && !isSyncing) {
+                    MissingApiKeyBanner(
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        onOpenSettings = navigateToSettings,
+                    )
+                }
+
+                AnimatedVisibility(visible = errorState != Downloader.ErrorState.None) {
+                    ErrorMessage(
+                        title = errorState.title,
+                        errorReport = errorState.report
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "No playlists yet",
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Tap + to add a playlist",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 24.dp)
-                    ) {
-                        items(playlists, key = { it.id }) { playlist ->
-                            PlaylistItem(
-                                playlist = playlist,
-                                onDelete = { playlistViewModel.deletePlaylist(playlist) }
-                            )
-                        }
-                        item {
-                            NavigationBarSpacer()
-                            Spacer(modifier = Modifier.height(160.dp))
-                        }
+                        view.longPressHapticFeedback()
+                        clipboardManager.setText(
+                            AnnotatedString(App.getVersionReport() + "\nURL: ${errorState.url}\n${errorState.report}")
+                        )
+                        ToastUtil.makeToast(R.string.error_copied)
                     }
                 }
             }
-        }
-    }
-}
 
-@Composable
-fun PlaylistItem(
-    playlist: PlaylistEntry,
-    onDelete: () -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Square Thumbnail (56dp x 56dp)
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                playlist.thumbnailUrl?.let { url ->
-                    AsyncImage(
-                        model = url,
-                        contentDescription = playlist.title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } ?: Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                    contentDescription = null,
+            if (playlists.isEmpty()) {
+                EmptyLibraryState(
+                    onAddFromChannel = { showChannelPlaylistsDialog = true },
+                    onAddByUrl = { showAddPlaylistDialog = true },
+                )
+            } else {
+                val syncingState = downloaderState as? Downloader.State.DownloadingPlaylist
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = playlist.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    playlist.channelTitle?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
+                    item(key = "header") {
+                        LibraryHeader(
+                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                            playlistCount = playlists.size,
+                            trackCount = playlists.sumOf { it.videoCount },
+                            lastSynced = playlists.maxOfOrNull { it.lastSynced } ?: 0L,
                         )
                     }
-
-                    if (playlist.videoCount > 0) {
-                        if (playlist.channelTitle != null) {
-                            Text(
-                                text = "•",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    items(playlists, key = { it.id }) { playlist ->
+                        SwipeToRemove(
+                            modifier = Modifier.animateItem(),
+                            onRemove = {
+                                playlistViewModel.deletePlaylist(playlist)
+                                scope.launch {
+                                    val action = snackbarHostState.showSnackbar(
+                                        message = "Removed ${playlist.title}",
+                                        actionLabel = "Undo",
+                                        withDismissAction = true,
+                                    )
+                                    if (action == SnackbarResult.ActionPerformed) {
+                                        playlistViewModel.restorePlaylist(playlist)
+                                    }
+                                }
+                            },
+                        ) {
+                            PlaylistRow(
+                                playlist = playlist,
+                                syncState = playlist.syncStateFor(isSyncing = syncingState != null),
                             )
                         }
-                        Text(
-                            text = "${playlist.videoCount} videos",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
-                }
-
-                // Last synced info
-                if (playlist.lastSynced > 0) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Synced ${formatRelativeTime(playlist.lastSynced)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
-                }
-            }
-
-            Box {
-                IconButton(onClick = { expanded = true }) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "More options")
-                }
-                DropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        onClick = {
-                            onDelete()
-                            expanded = false
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Outlined.Delete,
-                                contentDescription = "Delete",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    )
+                    item(key = "spacer") {
+                        NavigationBarSpacer()
+                        Spacer(modifier = Modifier.height(150.dp))
+                    }
                 }
             }
         }
     }
 }
 
-// Helper function for relative time display
-private fun formatRelativeTime(timestamp: Long): String {
-    val now = System.currentTimeMillis()
-    val diff = now - timestamp
+/**
+ * Derives the row's status chip. During a run everything is either being worked on or
+ * queued behind it; the downloader syncs the whole set as one pass rather than per-playlist,
+ * so a run marks them all as in-flight.
+ */
+private fun PlaylistEntry.syncStateFor(isSyncing: Boolean): PlaylistSyncState = when {
+    isSyncing -> PlaylistSyncState.Syncing
+    lastSynced > 0 -> PlaylistSyncState.Synced
+    else -> PlaylistSyncState.NeverSynced
+}
 
-    return when {
-        diff < 60_000 -> "just now"
-        diff < 3600_000 -> "${diff / 60_000}m ago"
-        diff < 86400_000 -> "${diff / 3600_000}h ago"
-        diff < 604800_000 -> "${diff / 86400_000}d ago"
-        else -> SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(timestamp))
+/**
+ * Three one-tap actions, ordered by how often they get used: sync at the bottom under the
+ * thumb, adding from the channel above it as the main way playlists get in, and the URL
+ * fallback at the top. All three are the same small icon-only button in the same accent so
+ * the stack reads as one control rather than three competing shapes. Nothing is behind a
+ * menu — every action is a single tap.
+ */
+@Composable
+private fun SyncFabStack(
+    isSyncing: Boolean,
+    hasPlaylists: Boolean,
+    onAddByUrl: () -> Unit,
+    onAddFromChannel: () -> Unit,
+    onSync: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.imePadding(),
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // The URL path is the fallback for a playlist that is not on your own channel.
+        SmallFloatingActionButton(
+            onClick = onAddByUrl,
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ) {
+            Icon(Icons.Outlined.Link, contentDescription = "Add a playlist by URL")
+        }
+
+        SmallFloatingActionButton(
+            onClick = onAddFromChannel,
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ) {
+            Icon(Icons.Outlined.Subscriptions, contentDescription = "Add a playlist from your channel")
+        }
+
+        // Hidden until there is something to sync: on a fresh install the button could only
+        // ever report "add a playlist first", so it was noise sitting in the primary slot.
+        AnimatedVisibility(
+            visible = hasPlaylists,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            SmallFloatingActionButton(
+                onClick = onSync,
+                containerColor = if (isSyncing) MaterialTheme.colorScheme.tertiaryContainer
+                else MaterialTheme.colorScheme.primaryContainer,
+                contentColor = if (isSyncing) MaterialTheme.colorScheme.onTertiaryContainer
+                else MaterialTheme.colorScheme.onPrimaryContainer,
+            ) {
+                if (isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                } else {
+                    Icon(Icons.Outlined.Sync, contentDescription = "Sync playlists")
+                }
+            }
+        }
     }
 }
 
@@ -495,13 +537,14 @@ fun AddPlaylistDialog(
 
     AlertDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
-        title = { Text("Add Playlist by URL") },
+        icon = { Icon(Icons.Outlined.Link, contentDescription = null) },
+        title = { Text("Add a playlist") },
         text = {
             Column {
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("YouTube Playlist URL") },
+                    label = { Text("Playlist link") },
                     placeholder = { Text("https://youtube.com/playlist?list=...") },
                     singleLine = true,
                     enabled = !isLoading,
@@ -518,9 +561,12 @@ fun AddPlaylistDialog(
                                 8.dp
                             )
                         ) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
                             Text(
-                                "Fetching playlist info...",
+                                "Looking up the playlist…",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -572,6 +618,7 @@ fun AddPlaylistDialog(
 fun ChannelPlaylistsDialog(
     onDismiss: () -> Unit,
     onPlaylistSelected: (YouTubeApiService.ChannelPlaylistInfo) -> Unit,
+    onPlaylistDeselected: (YouTubeApiService.ChannelPlaylistInfo) -> Unit,
     channelPlaylistsState: ChannelPlaylistsState,
     onFetch: () -> Unit,
     existingPlaylists: List<PlaylistEntry>
@@ -585,7 +632,8 @@ fun ChannelPlaylistsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Playlists from Channel") },
+        icon = { Icon(Icons.Outlined.Subscriptions, contentDescription = null) },
+        title = { Text("Your channel playlists") },
         text = {
             Box(
                 modifier = Modifier
@@ -599,11 +647,12 @@ fun ChannelPlaylistsDialog(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                            CircularProgressIndicator(modifier = Modifier.size(40.dp))
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                "Fetching channel playlists...",
-                                style = MaterialTheme.typography.bodyMedium
+                                "Loading your playlists…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -632,8 +681,24 @@ fun ChannelPlaylistsDialog(
 
                     is ChannelPlaylistsState.Success -> {
                         LazyColumn(
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            item(key = "hint") {
+                                val addedCount = channelPlaylistsState.playlists.count { p ->
+                                    existingPlaylists.any {
+                                        it.playlistId == p.id || it.url.contains(p.id)
+                                    }
+                                }
+                                Text(
+                                    text = if (addedCount > 0)
+                                        "$addedCount selected · tap to add or remove"
+                                    else "Tap a playlist to add it",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
                             items(channelPlaylistsState.playlists, key = { it.id }) { playlist ->
                                 val isAlreadyAdded = existingPlaylists.any {
                                     it.playlistId == playlist.id || it.url.contains(playlist.id)
@@ -642,10 +707,11 @@ fun ChannelPlaylistsDialog(
                                 ChannelPlaylistItem(
                                     playlist = playlist,
                                     isAlreadyAdded = isAlreadyAdded,
+                                    // Tapping an added row takes it back out, so the picker
+                                    // works as a checklist instead of a one-way door.
                                     onClick = {
-                                        if (!isAlreadyAdded) {
-                                            onPlaylistSelected(playlist)
-                                        }
+                                        if (isAlreadyAdded) onPlaylistDeselected(playlist)
+                                        else onPlaylistSelected(playlist)
                                     }
                                 )
                             }
@@ -676,13 +742,16 @@ fun ChannelPlaylistItem(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clickable(enabled = !isAlreadyAdded, onClick = onClick),
+            // Always clickable now: an added row toggles back off.
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
             containerColor = if (isAlreadyAdded)
-                MaterialTheme.colorScheme.surfaceVariant
+                MaterialTheme.colorScheme.secondaryContainer
             else
-                MaterialTheme.colorScheme.surface
-        )
+                MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
@@ -694,7 +763,7 @@ fun ChannelPlaylistItem(
             Box(
                 modifier = Modifier
                     .size(56.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(ArtworkShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
@@ -723,30 +792,34 @@ fun ChannelPlaylistItem(
             ) {
                 Text(
                     text = playlist.title,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     color = if (isAlreadyAdded)
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        MaterialTheme.colorScheme.onSecondaryContainer
                     else
                         MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = "${playlist.itemCount} videos",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isAlreadyAdded)
+                        MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            // Already added indicator
-            if (isAlreadyAdded) {
-                Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.CheckCircle,
-                    contentDescription = "Already added",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
+            // Reads as a checkbox so it is obvious the row can be turned back off.
+            Icon(
+                imageVector = if (isAlreadyAdded) Icons.Rounded.CheckCircle
+                else Icons.Outlined.RadioButtonUnchecked,
+                contentDescription = if (isAlreadyAdded) "Added, tap to remove"
+                else "Tap to add",
+                tint = if (isAlreadyAdded) MaterialTheme.colorScheme.onSecondaryContainer
+                else MaterialTheme.colorScheme.outline,
+                modifier = Modifier.size(24.dp)
+            )
         }
     }
 }

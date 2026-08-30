@@ -56,6 +56,17 @@ import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -110,6 +121,8 @@ fun SetupFlowPage(
         }
     }
 
+    val totalSteps = 6
+
     Scaffold { paddingValues ->
         Column(
             modifier = Modifier
@@ -119,7 +132,29 @@ fun SetupFlowPage(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            when (currentStep) {
+            // Tells you how much setup is left. Six unlabelled screens in a row with no
+            // sense of an end is the fastest way to make a first run feel long.
+            SetupProgress(
+                currentStep = currentStep,
+                totalSteps = totalSteps,
+                modifier = Modifier.padding(bottom = 32.dp)
+            )
+
+            AnimatedContent(
+                targetState = currentStep,
+                transitionSpec = {
+                    // Forward moves slide left, back slides right, matching the mental model
+                    // of a sequence you are walking through.
+                    val forward = targetState > initialState
+                    val offset = if (forward) 1 else -1
+                    (slideInHorizontally { width -> offset * width / 4 } + fadeIn())
+                        .togetherWith(
+                            slideOutHorizontally { width -> -offset * width / 4 } + fadeOut()
+                        )
+                },
+                label = "setupStep"
+            ) { step ->
+            when (step) {
                 0 -> WelcomeStep(onNext = { currentStep = 1 })
                 1 -> FolderSelectionStep(
                     folderSelected = folderSelected,
@@ -169,6 +204,7 @@ fun SetupFlowPage(
                         onSetupComplete()
                     }
                 )
+            }
             }
         }
     }
@@ -570,6 +606,34 @@ private fun BatteryOptimizationStep(
                     Text("Complete Setup")
                 }
             }
+        }
+    }
+}
+
+/**
+ * A row of segments, filled up to the current step. Reads faster than "Step 3 of 6" and
+ * gives the wizard a visible end.
+ */
+@Composable
+private fun SetupProgress(currentStep: Int, totalSteps: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        repeat(totalSteps) { index ->
+            val done = index <= currentStep
+            val color by animateColorAsState(
+                targetValue = if (done) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceVariant,
+                label = "setupSegment"
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(color)
+            )
         }
     }
 }

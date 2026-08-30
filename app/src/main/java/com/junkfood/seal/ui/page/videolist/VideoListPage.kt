@@ -7,6 +7,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,11 +61,13 @@ import com.junkfood.seal.ui.common.AsyncImageImpl
 import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.common.SVGImage
+import com.junkfood.seal.ui.component.SkeletonList
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.ConfirmButton
 import com.junkfood.seal.ui.component.DismissButton
 import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.ui.component.SealDialog
+import com.junkfood.seal.ui.theme.ArtworkShape
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.toFileSizeText
@@ -168,24 +173,13 @@ fun VideoListPage(
         }
     ) { paddingValues ->
         if (isLoading) {
-            Box(
+            // Placeholder rows in the shape of the real list: the scan is usually quick, and
+            // a full-screen spinner made a fast operation feel like a stall.
+            SkeletonList(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Scanning audio files...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+                    .padding(paddingValues)
+                    .padding(horizontal = 16.dp)
+            )
         } else if (audioFiles.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -193,16 +187,27 @@ fun VideoListPage(
                     .padding(paddingValues),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 32.dp)
+                ) {
                     SVGImage(
                         SVGString = VideoStreamSVG,
                         contentDescription = null,
                         modifier = Modifier.padding(horizontal = 72.dp, vertical = 20.dp)
                     )
                     Text(
-                        text = "No audio files",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "No audio yet",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Run a sync from the home screen and your playlist audio " +
+                                "will show up here.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -344,7 +349,12 @@ fun AudioFileItem(
                     onLongClick()
                 }
             ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        shape = MaterialTheme.shapes.medium,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
@@ -364,10 +374,17 @@ fun AudioFileItem(
                 AsyncImageImpl(
                     model = url,
                     contentDescription = fileInfo.videoTitle ?: fileInfo.name,
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(ArtworkShape),
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
-            } ?: Box(modifier = Modifier.size(56.dp))
+            } ?: Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(ArtworkShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            )
 
             Column(
                 modifier = Modifier
@@ -376,7 +393,8 @@ fun AudioFileItem(
             ) {
                 Text(
                     text = fileInfo.videoTitle ?: fileInfo.name,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )

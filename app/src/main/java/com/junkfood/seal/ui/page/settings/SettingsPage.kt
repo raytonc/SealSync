@@ -24,7 +24,6 @@ import androidx.compose.material.icons.rounded.EnergySavingsLeaf
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.rounded.SettingsApplications
 import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,7 +50,6 @@ import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.PreferenceItem
 import com.junkfood.seal.ui.component.PreferencesHintCard
-import com.junkfood.seal.ui.component.SettingTitle
 import com.junkfood.seal.ui.component.SmallTopAppBar
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -63,6 +61,15 @@ import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.automirrored.rounded.AddToHomeScreen
+import androidx.compose.material.icons.rounded.Update
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import com.junkfood.seal.ui.component.SettingGroup
+import com.junkfood.seal.ui.component.SettingSectionHeader
 
 @SuppressLint("BatteryLife")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -118,135 +125,123 @@ fun SettingsPage(
             )
         }) {
         LazyColumn(
-            modifier = Modifier.padding(it)
+            modifier = Modifier.padding(it),
+            contentPadding = PaddingValues(bottom = 32.dp)
         ) {
+            // --- Sync: everything the sync run itself depends on.
+            item { SettingSectionHeader(text = "Sync") }
             item {
-                SettingTitle(text = stringResource(id = R.string.settings))
+                SettingGroup {
+                    PreferenceItem(
+                        title = stringResource(id = R.string.audio_directory),
+                        description = audioDirectoryText,
+                        icon = Icons.Rounded.Folder
+                    ) {
+                        dirLauncher.launch(null)
+                    }
+
+                    PreferenceItem(
+                        title = "YouTube API Key",
+                        description = if (currentApiKey.isNotEmpty())
+                            "Configured · ${currentApiKey.take(6)}…"
+                        else
+                            "Required for syncing — tap to add",
+                        icon = Icons.Rounded.Key
+                    ) {
+                        showApiKeyDialog = true
+                    }
+
+                    PreferenceItem(
+                        title = "YouTube Channel Handle",
+                        description = if (currentChannelHandle.isNotEmpty())
+                            "@$currentChannelHandle"
+                        else
+                            "Optional — lets you add playlists from your channel",
+                        icon = Icons.Rounded.AccountCircle
+                    ) {
+                        showChannelHandleDialog = true
+                    }
+                }
             }
-            // Inline general settings (no category subtitles)
+
+            // --- Shortcuts and maintenance.
+            item { SettingSectionHeader(text = "General") }
             item {
-                // ytdlp update
-
-                PreferenceItem(
-                    title = stringResource(id = R.string.ytdlp_update_action),
-                    description = ytdlpVersion,
-                    leadingIcon = {
-                        if (isUpdating) {
-                            androidx.compose.material3.CircularProgressIndicator(
-                                modifier = Modifier
-                                    .padding(start = 8.dp, end = 16.dp)
-                                    .size(24.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            androidx.compose.material3.Icon(
-                                imageVector = Icons.Rounded.SettingsApplications,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .padding(start = 8.dp, end = 16.dp)
-                                    .size(24.dp)
-                            )
+                SettingGroup {
+                    PreferenceItem(
+                        title = stringResource(id = R.string.pin_shortcut),
+                        description = stringResource(id = R.string.pin_shortcut_desc),
+                        icon = Icons.AutoMirrored.Rounded.AddToHomeScreen
+                    ) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            ShortcutUtil.requestPinSyncShortcut(context)
                         }
-                    }, onClick = {
-                        scope.launch {
-                            runCatching {
-                                isUpdating = true
-                                val status = UpdateUtil.updateYtDlp()
-                                ytdlpVersion =
-                                    YoutubeDL.getInstance().version(context.applicationContext)
-                                        ?: context.getString(R.string.ytdlp_update)
-                                status
-                            }.onFailure { th ->
-                                th.printStackTrace()
-                                ToastUtil.showToast(context.getString(R.string.yt_dlp_update_fail))
-                            }.onSuccess { status ->
-                                val message = when (status) {
-                                    YoutubeDL.UpdateStatus.DONE ->
-                                        context.getString(R.string.yt_dlp_up_to_date) + " (${ytdlpVersion})"
+                    }
 
-                                    YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE ->
-                                        context.getString(R.string.yt_dlp_up_to_date) + " (${ytdlpVersion})"
-
-                                    else ->
-                                        context.getString(R.string.yt_dlp_up_to_date) + " (${ytdlpVersion})"
-                                }
-                                ToastUtil.showToast(message)
+                    PreferenceItem(
+                        title = stringResource(id = R.string.ytdlp_update_action),
+                        description = if (isUpdating) "Updating…" else ytdlpVersion,
+                        enabled = !isUpdating,
+                        leadingIcon = {
+                            if (isUpdating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier
+                                        .padding(start = 8.dp, end = 16.dp)
+                                        .size(24.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Update,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .padding(start = 8.dp, end = 16.dp)
+                                        .size(24.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            isUpdating = false
+                        }, onClick = {
+                            scope.launch {
+                                runCatching {
+                                    isUpdating = true
+                                    val status = UpdateUtil.updateYtDlp()
+                                    ytdlpVersion =
+                                        YoutubeDL.getInstance().version(context.applicationContext)
+                                            ?: context.getString(R.string.ytdlp_update)
+                                    status
+                                }.onFailure { th ->
+                                    th.printStackTrace()
+                                    ToastUtil.showToast(context.getString(R.string.yt_dlp_update_fail))
+                                }.onSuccess {
+                                    ToastUtil.showToast(
+                                        context.getString(R.string.yt_dlp_up_to_date) + " ($ytdlpVersion)"
+                                    )
+                                }
+                                isUpdating = false
+                            }
                         }
+                    )
+                }
+            }
+
+            // --- About.
+            item { SettingSectionHeader(text = stringResource(id = R.string.about)) }
+            item {
+                SettingGroup {
+                    PreferenceItem(
+                        title = stringResource(R.string.readme),
+                        description = stringResource(R.string.readme_desc),
+                        icon = Icons.Rounded.Info
+                    ) {
+                        uriHandler.openUri("https://github.com/raytonc/SealSync")
                     }
-                )
-            }
 
-            item {
-                PreferenceItem(
-                    title = stringResource(id = R.string.audio_directory),
-                    description = audioDirectoryText,
-                    icon = Icons.Rounded.Folder
-                ) {
-                    dirLauncher.launch(null)
+                    PreferenceItem(
+                        title = stringResource(id = R.string.credits),
+                        description = stringResource(id = R.string.credits_desc),
+                        icon = Icons.Rounded.VolunteerActivism
+                    ) { onNavigateTo(Route.CREDITS) }
                 }
-            }
-
-            item {
-                PreferenceItem(
-                    title = "YouTube API Key",
-                    description = if (currentApiKey.isNotEmpty())
-                        "${currentApiKey.take(10)}..."
-                    else
-                        "Not configured",
-                    icon = Icons.Rounded.Key
-                ) {
-                    showApiKeyDialog = true
-                }
-            }
-
-            item {
-                PreferenceItem(
-                    title = "YouTube Channel Handle",
-                    description = if (currentChannelHandle.isNotEmpty())
-                        "@$currentChannelHandle"
-                    else
-                        "Not configured",
-                    icon = Icons.Rounded.SettingsApplications
-                ) {
-                    showChannelHandleDialog = true
-                }
-            }
-
-            item {
-                PreferenceItem(
-                    title = stringResource(id = R.string.pin_shortcut),
-                    description = stringResource(id = R.string.pin_shortcut_desc),
-                    icon = Icons.Rounded.SettingsApplications
-                ) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        ShortcutUtil.requestPinSyncShortcut(context)
-                    }
-                }
-            }
-
-            // About section
-            item {
-                SettingTitle(text = stringResource(id = R.string.about))
-            }
-
-            item {
-                PreferenceItem(
-                    title = stringResource(R.string.readme),
-                    description = stringResource(R.string.readme_desc),
-                    icon = Icons.Rounded.Info
-                ) {
-                    uriHandler.openUri("https://github.com/raytonc/SealSync")
-                }
-            }
-
-            item {
-                PreferenceItem(
-                    title = stringResource(id = R.string.credits),
-                    description = stringResource(id = R.string.credits_desc),
-                    icon = Icons.Rounded.VolunteerActivism
-                ) { onNavigateTo(Route.CREDITS) }
             }
         }
 

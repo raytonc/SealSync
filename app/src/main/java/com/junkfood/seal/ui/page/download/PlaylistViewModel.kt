@@ -148,6 +148,21 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
         }
     }
 
+    /**
+     * Puts back a playlist removed by a swipe, for the snackbar's undo action. The row is
+     * reinserted with a fresh id (the column autogenerates), which is fine because nothing
+     * references a playlist by id outside the list itself.
+     */
+    fun restorePlaylist(playlist: PlaylistEntry) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Guard against a double-tap on undo, or the playlist being re-added by hand
+            // in the meantime, either of which would otherwise duplicate the row.
+            if (DatabaseUtil.findDuplicatePlaylist(playlist.url, playlist.playlistId) == null) {
+                DatabaseUtil.insertPlaylist(playlist.copy(id = 0))
+            }
+        }
+    }
+
     fun resetAddPlaylistState() {
         _addPlaylistState.value = AddPlaylistState.Idle
     }
@@ -236,6 +251,20 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+        }
+    }
+
+    /**
+     * Removes a playlist that was added from the channel picker, so tapping an already-added
+     * row in that dialog toggles it back off. Matches the same way the picker decides a row
+     * is already added: by playlist id, or by the id appearing in the stored URL for rows
+     * saved before the id column existed.
+     */
+    fun removePlaylistByChannelId(channelPlaylistId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            playlistsFlow.value
+                .filter { it.playlistId == channelPlaylistId || it.url.contains(channelPlaylistId) }
+                .forEach { DatabaseUtil.deletePlaylist(it) }
         }
     }
 

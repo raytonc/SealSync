@@ -84,12 +84,37 @@ object Downloader {
             }
     }
 
+    /**
+     * Outcome of the last completed sync, for the summary card on the home screen. Null
+     * until a run finishes, and cleared once the card is dismissed.
+     */
+    data class SyncResult(val downloaded: Int, val deleted: Int, val cancelled: Boolean = false)
+
     private val mutableDownloaderState: MutableStateFlow<State> = MutableStateFlow(State.Idle)
     private val mutableTaskState = MutableStateFlow(DownloadTaskItem())
     private val mutableErrorState: MutableStateFlow<ErrorState> = MutableStateFlow(ErrorState.None)
+    private val mutableSyncResult: MutableStateFlow<SyncResult?> = MutableStateFlow(null)
 
     val downloaderState = mutableDownloaderState.asStateFlow()
     val errorState = mutableErrorState.asStateFlow()
+    val syncResult = mutableSyncResult.asStateFlow()
+
+    /** Dismisses the sync summary card. */
+    fun clearSyncResult() {
+        mutableSyncResult.update { null }
+    }
+
+    /**
+     * Stops an in-flight sync. The download loop checks the state before each item and
+     * between the fetch and download steps, so flipping off [State.DownloadingPlaylist]
+     * unwinds it at the next checkpoint and the `finally` block reports what it managed
+     * to finish. The already-downloaded files are kept.
+     */
+    fun cancelSync() {
+        if (mutableDownloaderState.value is State.DownloadingPlaylist) {
+            updateState(State.Idle)
+        }
+    }
 
     /** Progress of the video currently downloading, for the sync UI. */
     val taskState = mutableTaskState.asStateFlow()
@@ -135,8 +160,10 @@ object Downloader {
         }
 
         Log.d(TAG, "syncPlaylists: starting sync for ${playlists.size} playlists")
-        // Drop the previous run's error now that a new one is starting.
+        // Drop the previous run's error and summary now that a new one is starting.
         clearErrorState()
+        clearSyncResult()
+        mutableTaskState.update { DownloadTaskItem() }
         mutableDownloaderState.update { State.DownloadingPlaylist() }
 
         applicationScope.launch(Dispatchers.IO) {
@@ -247,15 +274,19 @@ object Downloader {
                 }
 
                 Log.d(TAG, "syncPlaylists: complete")
-                ToastUtil.showToast(
-                    context.getString(R.string.sync_summary, downloadedCount, deletedCount)
-                )
+                // The summary card on the home screen reports the counts now; a toast on top
+                // of it would say the same thing twice.
             } finally {
                 // Every exit path lands here, so a cancelled or failed run still clears the
                 // notification and returns to Idle. Without this the state stays
                 // DownloadingPlaylist forever, the foreground service is never stopped, and
                 // isDownloaderAvailable() rejects every later sync until the process dies.
-                finishProcessing(downloaded = downloadedCount, deleted = deletedCount)
+                finishProcessing(
+                    downloaded = downloadedCount,
+                    deleted = deletedCount,
+                    // Whoever cancelled flipped the state off DownloadingPlaylist first.
+                    cancelled = downloaderState.value !is State.DownloadingPlaylist,
+                )
             }
         }
     }
@@ -406,12 +437,15 @@ object Downloader {
      * Ends the run: clears the ongoing notification (leaving a summary when anything
      * happened) and returns to Idle, which unbinds the foreground service.
      */
-    private fun finishProcessing(downloaded: Int = 0, deleted: Int = 0) {
+    private fun finishProcessing(downloaded: Int = 0, deleted: Int = 0, cancelled: Boolean = false) {
         // No early return when already Idle: a cancelled sync reaches here with the state
         // flipped to Idle by whoever cancelled it, and the ongoing notification still
         // posted. Both steps below are idempotent, so running them twice is harmless.
         NotificationUtil.finishPlaylistNotification(downloaded, deleted)
         mutableTaskState.update { it.copy(progress = 100f, progressText = "") }
+        // Publish the outcome for the summary card. This is the in-app replacement for the
+        // completion toast, which was the only sign a sync had ever finished.
+        mutableSyncResult.update { SyncResult(downloaded, deleted, cancelled) }
         updateState(State.Idle)
         // Deliberately not clearing the error state: any item that failed during the run
         // is the one thing worth showing once it ends. Clearing here wiped the banner
