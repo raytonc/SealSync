@@ -37,6 +37,7 @@
         android:name=".App"
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true"
         android:extractNativeLibs="true"
         android:icon="@mipmap/ic_launcher"
@@ -90,15 +91,16 @@
         </provider>
 
         <!--
-            Exported so the launcher can start the pinned shortcut, but deliberately without
-            an intent-filter: both the static and pinned shortcuts target this class
-            explicitly, and a VIEW/DEFAULT filter would let any app on the device trigger a
-            sync (which deletes files) with no user interaction.
+            Not exported. A sync deletes local files, so no other app should be able to
+            trigger one: exporting would allow that by explicit component name regardless
+            of whether an intent-filter is present. Both the static and pinned shortcuts
+            are dispatched by the launcher through ShortcutManager, which does not require
+            the target activity to be exported.
         -->
         <activity
             android:name=".ui.shortcut.SyncShortcutActivity"
             android:excludeFromRecents="true"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.SealSync.TransparentActivity" />
 
         <meta-data

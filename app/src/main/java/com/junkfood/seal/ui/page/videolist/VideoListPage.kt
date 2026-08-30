@@ -233,15 +233,20 @@ fun VideoListPage(
                                     selectedFiles.add(fileInfo)
                                 }
                             } else {
-                                // Open file using URI or file path
-                                val path = fileInfo.uri?.let { FileUtil.getRealPath(it) }
-                                    ?: fileInfo.file?.absolutePath
-                                if (path != null) {
-                                    FileUtil.openFile(path = path) {
+                                // Prefer the SAF URI, which is already directly openable.
+                                val uri = fileInfo.uri
+                                val path = fileInfo.file?.absolutePath
+                                when {
+                                    uri != null -> FileUtil.openFile(uri = uri) {
                                         ToastUtil.showToast(App.context.getString(R.string.file_unavailable))
                                     }
-                                } else {
-                                    ToastUtil.showToast(App.context.getString(R.string.file_unavailable))
+
+                                    path != null -> FileUtil.openFile(path = path) {
+                                        ToastUtil.showToast(App.context.getString(R.string.file_unavailable))
+                                    }
+
+                                    else ->
+                                        ToastUtil.showToast(App.context.getString(R.string.file_unavailable))
                                 }
                             }
                         },

@@ -163,14 +163,11 @@ object DownloadUtil {
             )
         }.onFailure { return Result.failure(it) }
 
-        val fileName = videoInfo.filename
-            ?: videoInfo.requestedDownloads?.firstOrNull()?.filename
-            ?: videoInfo.title
-        Log.d(TAG, "downloadVideo: finished $fileName")
+        Log.d(TAG, "downloadVideo: finished ${videoInfo.id} (${videoInfo.title})")
 
         return Result.success(
             FileUtil.scanFileToMediaLibraryPostDownload(
-                title = fileName, downloadDir = audioDownloadDir
+                videoId = videoInfo.id, downloadDir = audioDownloadDir
             )
         )
     }

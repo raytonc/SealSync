@@ -35,39 +35,43 @@ data class AudioFileData(
  * Recursively lists audio files under a SAF tree URI. Used instead of the File API so
  * the app keeps working under scoped storage without broad storage permissions.
  */
+/**
+ * Throws rather than returning a short list when the tree cannot be read.
+ *
+ * A sync treats "no local files" as "everything is missing", so a partial or empty result
+ * from a failed scan makes it re-download the whole library. Callers that must distinguish
+ * the two cases wrap this in runCatching and abort the run.
+ */
 fun scanAudioFilesWithDocumentFile(context: Context, treeUri: Uri): List<AudioFileData> {
     val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
-    if (rootDoc == null) {
-        Log.e(TAG, "scanAudioFiles: could not open tree URI $treeUri")
-        return emptyList()
-    }
+        ?: throw IllegalStateException("could not open tree URI $treeUri")
 
     val files = mutableListOf<AudioFileData>()
 
     fun scanRecursively(doc: DocumentFile) {
-        runCatching {
-            doc.listFiles().forEach { file ->
-                if (file.isDirectory) {
-                    scanRecursively(file)
-                    return@forEach
-                }
-                if (!file.isFile) return@forEach
-
-                val name = file.name ?: return@forEach
-                // Files the user deleted are kept around by the system with this prefix.
-                if (name.startsWith(".trashed-")) return@forEach
-                if (name.substringAfterLast('.', "").lowercase() !in AUDIO_EXTENSIONS) return@forEach
-
-                files.add(
-                    AudioFileData(
-                        uri = file.uri,
-                        name = name,
-                        size = file.length(),
-                        lastModified = file.lastModified()
-                    )
-                )
+        // No runCatching here: a directory that cannot be listed must fail the whole scan
+        // rather than silently contributing nothing.
+        doc.listFiles().forEach { file ->
+            if (file.isDirectory) {
+                scanRecursively(file)
+                return@forEach
             }
-        }.onFailure { Log.e(TAG, "scanAudioFiles: error scanning ${doc.name}", it) }
+            if (!file.isFile) return@forEach
+
+            val name = file.name ?: return@forEach
+            // Files the user deleted are kept around by the system with this prefix.
+            if (name.startsWith(".trashed-")) return@forEach
+            if (name.substringAfterLast('.', "").lowercase() !in AUDIO_EXTENSIONS) return@forEach
+
+            files.add(
+                AudioFileData(
+                    uri = file.uri,
+                    name = name,
+                    size = file.length(),
+                    lastModified = file.lastModified()
+                )
+            )
+        }
     }
 
     scanRecursively(rootDoc)
@@ -123,6 +127,22 @@ object FileUtil {
                 ?: throw Exception("no viewer intent for $this")
         }.onFailure(onFailureCallback)
 
+    /**
+     * Opens a SAF document URI directly. The scan already hands back usable content URIs,
+     * so converting one to a filesystem path and reparsing it only loses information:
+     * [getRealPath] expects a *tree* URI and silently falls back to the app's own download
+     * folder for anything it cannot map, which opened the wrong file or nothing at all.
+     */
+    inline fun openFile(uri: Uri, onFailureCallback: (Throwable) -> Unit) =
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, context.contentResolver.getType(uri) ?: "audio/*")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+        }.onFailure(onFailureCallback)
+
     fun createIntentForOpeningFile(path: String?): Intent? {
         if (path == null) return null
 
@@ -155,10 +175,15 @@ object FileUtil {
      * files it produced, excluding the thumbnail sidecars.
      */
     @CheckResult
-    fun scanFileToMediaLibraryPostDownload(title: String, downloadDir: String): List<String> =
+    /**
+     * [videoId] rather than the title: the title is only a substring of the filename, so a
+     * short or generic one ("Intro") matched every file containing it and handed unrelated
+     * media to the scanner. The id is unique and the output template always embeds it.
+     */
+    fun scanFileToMediaLibraryPostDownload(videoId: String, downloadDir: String): List<String> =
         File(downloadDir)
             .walkTopDown()
-            .filter { it.isFile && it.absolutePath.contains(title) }
+            .filter { it.isFile && it.name.contains("[$videoId]") }
             .map { it.absolutePath }
             .toMutableList()
             .apply {

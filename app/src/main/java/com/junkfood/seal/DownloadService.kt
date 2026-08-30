@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 
 private const val TAG = "DownloadService"
@@ -33,6 +34,9 @@ class DownloadService : Service() {
 
     companion object {
         const val ACTION_SYNC_PLAYLISTS = "com.junkfood.seal.ACTION_SYNC_PLAYLISTS"
+
+        /** How long to wait for a sync to actually start before concluding it was rejected. */
+        private const val SYNC_START_TIMEOUT_MS = 10_000L
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -62,6 +66,23 @@ class DownloadService : Service() {
                 runCatching {
                     Downloader.syncPlaylists(DatabaseUtil.getPlaylistsFlow().first())
                 }.onFailure { Log.e(TAG, "Sync failed from service command", it) }
+
+                // syncPlaylists returns as soon as the sync coroutine is launched, so wait
+                // for the run to actually finish before giving up the foreground slot.
+                // Without this the shortcut path left the service alive forever:
+                // hasStartedWork blocked onUnbind from stopping it and nothing else would.
+                //
+                // Waiting for Idle alone would race the launch and match the Idle that is
+                // still in place here, so wait for the run to begin first. syncPlaylists
+                // also rejects the request outright (no playlists, no API key, already
+                // running), which never leaves Idle -- hence the timeout.
+                withTimeoutOrNull(SYNC_START_TIMEOUT_MS) {
+                    Downloader.downloaderState.first { it !is Downloader.State.Idle }
+                }
+                Downloader.downloaderState.first { it is Downloader.State.Idle }
+                Log.d(TAG, "sync finished, stopping service")
+                hasStartedWork = false
+                stopSelf()
             }
         }
 

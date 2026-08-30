@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ replacement for backup_rules.xml, which older versions still read.
+    Everything is backed up by default; the playlist database in particular, since it is
+    the only app state that cannot be rebuilt from the contents of the audio folder.
+-->
+<data-extraction-rules>
+    <cloud-backup />
+    <device-transfer />
+</data-extraction-rules>

@@ -79,7 +79,9 @@ fun HomeEntry() {
     var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
     var currentDownloadStatus by remember { mutableStateOf(UpdateUtil.DownloadStatus.NotYet as UpdateUtil.DownloadStatus) }
     val scope = rememberCoroutineScope()
-    var updateJob: Job? = null
+    // Held across recompositions: a plain local was reset to null on every recomposition,
+    // so dismissing the dialog cancelled nothing and the download kept running.
+    val updateJob = remember { mutableStateOf<Job?>(null) }
     var latestRelease by remember { mutableStateOf(UpdateUtil.LatestRelease()) }
     val settings =
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -205,11 +207,11 @@ fun HomeEntry() {
             UpdateDialogImpl(
                 onDismissRequest = {
                     showUpdateDialog = false
-                    updateJob?.cancel()
+                    updateJob.value?.cancel()
                 },
                 title = latestRelease.name.toString(),
                 onConfirmUpdate = {
-                    updateJob = scope.launch(Dispatchers.IO) {
+                    updateJob.value = scope.launch(Dispatchers.IO) {
                         runCatching {
                             UpdateUtil.downloadApk(latestRelease = latestRelease)
                                 .collect { downloadStatus ->

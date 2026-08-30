@@ -45,8 +45,14 @@ object Downloader {
     private val AUDIO_EXTENSIONS =
         setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
 
-    /** Matches the `[videoId]` yt-dlp appends via the output template. */
-    private val VIDEO_ID_PATTERN = Regex("\\[([a-zA-Z0-9_-]{6,50})]")
+    /**
+     * Matches the `[videoId]` yt-dlp appends via the output template, which always sits
+     * immediately before the extension. Anchored to the end rather than matching the
+     * first bracket group: titles routinely carry their own tags (`[Official Video]`,
+     * `[Remix_2024]`), and picking one of those up yields an id no playlist can claim,
+     * so the file would be deleted and re-downloaded on every sync.
+     */
+    private val VIDEO_ID_PATTERN = Regex("\\[([a-zA-Z0-9_-]{6,50})]\\.[^.]+$")
 
     sealed class State {
         data class DownloadingPlaylist(
@@ -84,6 +90,9 @@ object Downloader {
 
     val downloaderState = mutableDownloaderState.asStateFlow()
     val errorState = mutableErrorState.asStateFlow()
+
+    /** Progress of the video currently downloading, for the sync UI. */
+    val taskState = mutableTaskState.asStateFlow()
 
     init {
         // Keep the foreground service bound exactly while something is running.
@@ -126,119 +135,128 @@ object Downloader {
         }
 
         Log.d(TAG, "syncPlaylists: starting sync for ${playlists.size} playlists")
+        // Drop the previous run's error now that a new one is starting.
+        clearErrorState()
         mutableDownloaderState.update { State.DownloadingPlaylist() }
 
         applicationScope.launch(Dispatchers.IO) {
-            refreshPlaylistMetadata(playlists, apiKey)
+            // Counted outside the body so the finally block can report them on every exit
+            // path, cancellation included.
+            var downloadedCount = 0
+            var deletedCount = 0
 
-            val preferences = DownloadUtil.DownloadPreferences(
-                extractAudio = true,
-                embedThumbnail = true,
-                embedMetadata = true,
-                cropArtwork = true
-            )
+            try {
+                refreshPlaylistMetadata(playlists, apiKey)
 
-            // Step 1: enumerate every video across every playlist.
-            val remote = fetchRemoteVideos(playlists, preferences) ?: run {
-                finishProcessing()
-                return@launch
-            }
+                val preferences = DownloadUtil.DownloadPreferences(
+                    extractAudio = true,
+                    embedThumbnail = true,
+                    embedMetadata = true,
+                    cropArtwork = true
+                )
 
-            if (remote.videos.isEmpty()) {
-                Log.e(TAG, "syncPlaylists: abort, no playlist videos fetched")
-                ToastUtil.showToast(context.getString(R.string.sync_no_playlist_data))
-                finishProcessing()
-                return@launch
-            }
+                // Step 1: enumerate every video across every playlist.
+                val remote = fetchRemoteVideos(playlists, preferences) ?: return@launch
 
-            // Step 2: scan the destination folder.
-            val existingFiles = scanExistingAudioFiles() ?: run {
-                finishProcessing()
-                return@launch
-            }
-
-            // Step 3: index local files by embedded video id, and by normalized basename
-            // so files downloaded before ids were in the template still match.
-            val filesByVideoId = mutableMapOf<String, AudioFileData>()
-            val localBasenames = mutableSetOf<String>()
-            existingFiles.forEach { file ->
-                localBasenames.add(normalizeName(file.name.substringBeforeLast('.')))
-                VIDEO_ID_PATTERN.find(file.name)?.groupValues?.get(1)?.let {
-                    filesByVideoId[it] = file
-                }
-            }
-
-            // Step 4: a remote video is present if its id matches a file, or its title does.
-            val presentVideoIds = remote.videos.keys.filterTo(mutableSetOf()) { videoId ->
-                filesByVideoId.containsKey(videoId) ||
-                        remote.normalizedTitles[videoId]?.let(localBasenames::contains) == true
-            }
-
-            // Step 5: delete identifiable local files that no longer belong to any playlist.
-            // Only files carrying an id are eligible, so untracked files are never touched.
-            val filesToDelete = filesByVideoId.filterKeys { it !in remote.videos }
-            filesToDelete.forEach { (videoId, file) ->
-                runCatching {
-                    if (DocumentFile.fromSingleUri(context, file.uri)?.delete() == true) {
-                        Log.d(TAG, "syncPlaylists: deleted ${file.name} ($videoId)")
-                    } else {
-                        Log.w(TAG, "syncPlaylists: failed to delete ${file.name} ($videoId)")
-                    }
-                }.onFailure { Log.e(TAG, "syncPlaylists: failed to delete ${file.name}", it) }
-            }
-
-            // Step 6: download whatever is still missing.
-            val videosToDownload = remote.videos.filterKeys { it !in presentVideoIds }
-            val downloadCount = videosToDownload.size
-            Log.d(
-                TAG,
-                "syncPlaylists: ${remote.videos.size} remote, ${existingFiles.size} local, " +
-                        "$downloadCount to download, ${filesToDelete.size} to delete"
-            )
-
-            if (downloadCount == 0) {
-                ToastUtil.showToast(context.getString(R.string.sync_already_synced))
-                finishProcessing(deleted = filesToDelete.size)
-                return@launch
-            }
-
-            videosToDownload.entries.forEachIndexed { index, (videoId, source) ->
-                if (downloaderState.value !is State.DownloadingPlaylist) {
-                    Log.d(TAG, "syncPlaylists: cancelled")
+                if (remote.videos.isEmpty()) {
+                    Log.e(TAG, "syncPlaylists: abort, no playlist videos fetched")
+                    ToastUtil.showToast(context.getString(R.string.sync_no_playlist_data))
                     return@launch
                 }
 
-                mutableDownloaderState.update {
-                    if (it is State.DownloadingPlaylist) {
-                        it.copy(currentItem = index + 1, itemCount = downloadCount)
-                    } else return@launch
-                }
-                NotificationUtil.updateServiceNotificationForPlaylist(index + 1, downloadCount)
+                // Step 2: scan the destination folder.
+                val existingFiles = scanExistingAudioFiles() ?: return@launch
 
-                val (playlistUrl, playlistIndex) = source
-                Log.d(TAG, "syncPlaylists: [${index + 1}/$downloadCount] $videoId")
-
-                DownloadUtil.fetchVideoInfoFromUrl(
-                    url = playlistUrl,
-                    playlistItem = playlistIndex,
-                    preferences = preferences
-                ).onSuccess { videoInfo ->
-                    if (downloaderState.value !is State.DownloadingPlaylist) return@launch
-                    // Download the single video rather than the playlist, so yt-dlp does not
-                    // re-walk every item for each entry.
-                    downloadVideo(videoInfo, preferences).onFailure { th ->
-                        reportItemError(th, videoInfo.originalUrl, isFetchingInfo = false)
+                // Step 3: index local files by embedded video id, and by normalized basename
+                // so files downloaded before ids were in the template still match.
+                val filesByVideoId = mutableMapOf<String, AudioFileData>()
+                val localBasenames = mutableSetOf<String>()
+                existingFiles.forEach { file ->
+                    localBasenames.add(normalizeName(file.name.substringBeforeLast('.')))
+                    VIDEO_ID_PATTERN.find(file.name)?.groupValues?.get(1)?.let {
+                        filesByVideoId[it] = file
                     }
-                }.onFailure { th ->
-                    reportItemError(th, playlistUrl, isFetchingInfo = true)
                 }
-            }
 
-            Log.d(TAG, "syncPlaylists: complete")
-            ToastUtil.showToast(
-                context.getString(R.string.sync_summary, downloadCount, filesToDelete.size)
-            )
-            finishProcessing(downloaded = downloadCount, deleted = filesToDelete.size)
+                // Step 4: a remote video is present if its id matches a file, or its title does.
+                val presentVideoIds = remote.videos.keys.filterTo(mutableSetOf()) { videoId ->
+                    filesByVideoId.containsKey(videoId) ||
+                            remote.normalizedTitles[videoId]?.let(localBasenames::contains) == true
+                }
+
+                // Step 5: delete identifiable local files that no longer belong to any playlist.
+                // Only files carrying an id are eligible, so untracked files are never touched.
+                val filesToDelete = filesByVideoId.filterKeys { it !in remote.videos }
+                filesToDelete.forEach { (videoId, file) ->
+                    runCatching {
+                        if (DocumentFile.fromSingleUri(context, file.uri)?.delete() == true) {
+                            Log.d(TAG, "syncPlaylists: deleted ${file.name} ($videoId)")
+                        } else {
+                            Log.w(TAG, "syncPlaylists: failed to delete ${file.name} ($videoId)")
+                        }
+                    }.onFailure { Log.e(TAG, "syncPlaylists: failed to delete ${file.name}", it) }
+                }
+                deletedCount = filesToDelete.size
+
+                // Step 6: download whatever is still missing.
+                val videosToDownload = remote.videos.filterKeys { it !in presentVideoIds }
+                val downloadCount = videosToDownload.size
+                Log.d(
+                    TAG,
+                    "syncPlaylists: ${remote.videos.size} remote, ${existingFiles.size} local, " +
+                            "$downloadCount to download, ${filesToDelete.size} to delete"
+                )
+
+                if (downloadCount == 0) {
+                    ToastUtil.showToast(context.getString(R.string.sync_already_synced))
+                    return@launch
+                }
+
+                videosToDownload.entries.forEachIndexed { index, (videoId, source) ->
+                    if (downloaderState.value !is State.DownloadingPlaylist) {
+                        Log.d(TAG, "syncPlaylists: cancelled")
+                        return@launch
+                    }
+
+                    mutableDownloaderState.update {
+                        if (it is State.DownloadingPlaylist) {
+                            it.copy(currentItem = index + 1, itemCount = downloadCount)
+                        } else return@launch
+                    }
+                    NotificationUtil.updateServiceNotificationForPlaylist(index + 1, downloadCount)
+
+                    val (playlistUrl, playlistIndex) = source
+                    Log.d(TAG, "syncPlaylists: [${index + 1}/$downloadCount] $videoId")
+
+                    DownloadUtil.fetchVideoInfoFromUrl(
+                        url = playlistUrl,
+                        playlistItem = playlistIndex,
+                        preferences = preferences
+                    ).onSuccess { videoInfo ->
+                        if (downloaderState.value !is State.DownloadingPlaylist) return@launch
+                        // Download the single video rather than the playlist, so yt-dlp does not
+                        // re-walk every item for each entry.
+                        downloadVideo(videoInfo, preferences)
+                            .onSuccess { downloadedCount++ }
+                            .onFailure { th ->
+                                reportItemError(th, videoInfo.originalUrl, isFetchingInfo = false)
+                            }
+                    }.onFailure { th ->
+                        reportItemError(th, playlistUrl, isFetchingInfo = true)
+                    }
+                }
+
+                Log.d(TAG, "syncPlaylists: complete")
+                ToastUtil.showToast(
+                    context.getString(R.string.sync_summary, downloadedCount, deletedCount)
+                )
+            } finally {
+                // Every exit path lands here, so a cancelled or failed run still clears the
+                // notification and returns to Idle. Without this the state stays
+                // DownloadingPlaylist forever, the foreground service is never stopped, and
+                // isDownloaderAvailable() rejects every later sync until the process dies.
+                finishProcessing(downloaded = downloadedCount, deleted = deletedCount)
+            }
         }
     }
 
@@ -389,11 +407,15 @@ object Downloader {
      * happened) and returns to Idle, which unbinds the foreground service.
      */
     private fun finishProcessing(downloaded: Int = 0, deleted: Int = 0) {
-        if (downloaderState.value is State.Idle) return
+        // No early return when already Idle: a cancelled sync reaches here with the state
+        // flipped to Idle by whoever cancelled it, and the ongoing notification still
+        // posted. Both steps below are idempotent, so running them twice is harmless.
         NotificationUtil.finishPlaylistNotification(downloaded, deleted)
         mutableTaskState.update { it.copy(progress = 100f, progressText = "") }
         updateState(State.Idle)
-        clearErrorState()
+        // Deliberately not clearing the error state: any item that failed during the run
+        // is the one thing worth showing once it ends. Clearing here wiped the banner
+        // before it could render. The next sync clears it on the way in instead.
     }
 
     /**

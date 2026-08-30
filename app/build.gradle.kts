@@ -69,8 +69,11 @@ android {
         val keystoreProperties = Properties()
         keystoreProperties.load(FileInputStream(keystorePropertiesFile))
         signingConfigs {
-            getByName("debug")
-            {
+            // A dedicated release config. This used to overwrite the "debug" config, which
+            // meant release builds were signed as debug: the in-app updater can only
+            // install an APK signed with the same key as the installed app, so the release
+            // key has to be its own config that the release build type actually selects.
+            create("release") {
                 keyAlias = keystoreProperties["keyAlias"].toString()
                 keyPassword = keystoreProperties["keyPassword"].toString()
                 storeFile = file(keystoreProperties["storeFile"]!!)
@@ -148,13 +151,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
             if (keystorePropertiesFile.exists()) {
-                signingConfig = signingConfigs.getByName("debug")
+                signingConfig = signingConfigs.getByName("release")
             }
         }
         debug {
-            if (keystorePropertiesFile.exists()) {
-                signingConfig = signingConfigs.getByName("debug")
-            }
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             resValue("string", "app_name", "SealSync Debug")

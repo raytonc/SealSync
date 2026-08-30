@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!-- Exclude the Room database from backup to ensure fresh installs start with empty database -->
-    <exclude domain="database" path="app_database" />
-    <exclude domain="database" path="app_database-shm" />
-    <exclude domain="database" path="app_database-wal" />
+    <!--
+        The Room database is the playlist library: the URLs the user added by hand and the
+        only app state that cannot be rebuilt from the audio folder. It is included in
+        backups so an uninstall or a device migration does not lose it.
+
+        It was previously excluded, from when the database held download history and a
+        fresh install was better off empty. That is no longer what it stores.
+    -->
 </full-backup-content>

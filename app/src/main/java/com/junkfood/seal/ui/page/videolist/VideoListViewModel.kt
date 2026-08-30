@@ -225,26 +225,6 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
         }
     }
 
-    private fun findThumbnailInCache(baseName: String): String? {
-        return try {
-            // Thumbnails are saved to cacheDir
-            val cacheDir = App.context.cacheDir
-
-            // Look for thumbnail with various extensions
-            val thumbnailExtensions = listOf("jpg", "jpeg", "png", "webp")
-            for (ext in thumbnailExtensions) {
-                val thumbFile = File(cacheDir, "$baseName.$ext")
-                if (thumbFile.exists()) {
-                    // Return absolute path - Coil can load from file paths directly
-                    return thumbFile.absolutePath
-                }
-            }
-            null
-        } catch (e: Exception) {
-            Log.e(TAG, "findThumbnailInCache: Failed for $baseName", e)
-            null
-        }
-    }
 
     fun deleteFile(fileInfo: AudioFileInfo) {
         viewModelScope.launch(Dispatchers.IO) {

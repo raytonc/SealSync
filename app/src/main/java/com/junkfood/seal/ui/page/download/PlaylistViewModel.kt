@@ -152,10 +152,6 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
         _addPlaylistState.value = AddPlaylistState.Idle
     }
 
-    fun getNextPlaylistNumber(): Int {
-        return (playlistsFlow.value.size + 1)
-    }
-
     fun fetchChannelPlaylists() {
         viewModelScope.launch(Dispatchers.IO) {
             _channelPlaylistsState.value = ChannelPlaylistsState.Loading

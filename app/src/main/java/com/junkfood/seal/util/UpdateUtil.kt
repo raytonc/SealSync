@@ -31,8 +31,11 @@ import java.util.regex.Pattern
 
 object UpdateUtil {
 
-    private const val OWNER = "JunkFood02"
-    private const val REPO = "Seal"
+    // This fork's own releases. Pointing these at the upstream Seal repo while keeping
+    // upstream's applicationId meant the updater offered upstream builds as "updates" to
+    // SealSync, which at best fails signature verification and at worst replaces the app.
+    private const val OWNER = "raytonc"
+    private const val REPO = "sealsync"
     private const val ARM64 = "arm64-v8a"
     private const val ARM32 = "armeabi-v7a"
     private const val X86 = "x86"
