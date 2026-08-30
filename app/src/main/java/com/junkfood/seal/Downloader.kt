@@ -23,6 +23,7 @@ import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.VideoInfo
 import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YouTubeApiService
+import com.junkfood.seal.util.clearCachedDataForAudio
 import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.CancellationException
@@ -437,12 +438,20 @@ object Downloader {
 
                 // Step 3: index local files by embedded video id, and by normalized basename
                 // so files downloaded before ids were in the template still match.
-                val filesByVideoId = mutableMapOf<String, AudioFileData>()
+                //
+                // Several files can carry the same id. A re-download that picks a different
+                // container leaves the old extension behind ("Song [abc123].opus" beside
+                // "Song [abc123].m4a"), and an interrupted run can leave a partial next to
+                // the finished file. Keyed by id to a single file, the last one indexed won
+                // and the rest became invisible to the delete step below -- so a track
+                // dropped from a playlist left its duplicates in the folder permanently,
+                // with no way to reach them short of deleting by hand.
+                val filesByVideoId = mutableMapOf<String, MutableList<AudioFileData>>()
                 val localBasenames = mutableSetOf<String>()
                 existingFiles.forEach { file ->
                     localBasenames.add(normalizeName(file.name.substringBeforeLast('.')))
                     VIDEO_ID_PATTERN.find(file.name)?.groupValues?.get(1)?.let {
-                        filesByVideoId[it] = file
+                        filesByVideoId.getOrPut(it) { mutableListOf() }.add(file)
                     }
                 }
 
@@ -456,16 +465,35 @@ object Downloader {
                 // Only files carrying an id are eligible, so untracked files are never touched.
                 val filesToDelete = filesByVideoId.filterKeys { it !in remote.videos }
                 if (filesToDelete.isNotEmpty()) updatePhase(Phase.Deleting)
-                filesToDelete.forEach { (videoId, file) ->
-                    runCatching {
-                        if (DocumentFile.fromSingleUri(context, file.uri)?.delete() == true) {
-                            Log.d(TAG, "syncPlaylists: deleted ${file.name} ($videoId)")
-                        } else {
-                            Log.w(TAG, "syncPlaylists: failed to delete ${file.name} ($videoId)")
+                // Counts files actually removed, not files attempted. A delete can fail --
+                // the provider revokes the grant, the file is gone already, the card is
+                // read-only -- and reporting the attempt told the user their folder had
+                // been tidied when it had not, which is the one thing the summary card
+                // must not get wrong.
+                var deletedFiles = 0
+                filesToDelete.forEach { (videoId, files) ->
+                    files.forEach { file ->
+                        runCatching {
+                            if (DocumentFile.fromSingleUri(context, file.uri)?.delete() == true) {
+                                deletedFiles++
+                                // The artwork cache and the download's sidecars sit in app
+                                // storage rather than in the synced folder, so removing the
+                                // audio leaves both. Over many syncs that is unbounded
+                                // growth in the cache dir for tracks that no longer exist.
+                                clearCachedDataForAudio(context, file.uri, file.name)
+                                Log.d(TAG, "syncPlaylists: deleted ${file.name} ($videoId)")
+                            } else {
+                                Log.w(
+                                    TAG,
+                                    "syncPlaylists: failed to delete ${file.name} ($videoId)"
+                                )
+                            }
+                        }.onFailure {
+                            Log.e(TAG, "syncPlaylists: failed to delete ${file.name}", it)
                         }
-                    }.onFailure { Log.e(TAG, "syncPlaylists: failed to delete ${file.name}", it) }
+                    }
                 }
-                deletedCount = filesToDelete.size
+                deletedCount = deletedFiles
                 // Published as it lands, so a run whose only work is deletion has something
                 // truthful to show instead of sitting on the "preparing" placeholder.
                 mutableDownloaderState.update {
@@ -483,7 +511,7 @@ object Downloader {
                 Log.d(
                     TAG,
                     "syncPlaylists: ${remote.videos.size} remote, ${existingFiles.size} local, " +
-                            "$downloadCount to download, ${filesToDelete.size} to delete"
+                            "$downloadCount to download, $deletedCount deleted"
                 )
 
                 if (downloadCount == 0) {
@@ -688,19 +716,45 @@ object Downloader {
 
             results.forEach { (entry, result) ->
                 result.onSuccess { info ->
+                    // Counted per playlist, because an empty listing is the dangerous case
+                    // below and only this scope knows which playlist it came from.
+                    var listed = 0
                     when (info) {
                         is PlaylistResult -> info.entries.orEmpty().forEach entries@{ item ->
                             val videoId = item.id ?: return@entries
                             val title = item.title.orEmpty()
                             videos[videoId] = title
+                            listed++
                             if (title.isNotEmpty()) normalizedTitles[videoId] = normalizeName(title)
                         }
 
                         is VideoInfo -> {
                             videos[info.id] = info.title
+                            listed++
                             info.title.takeIf { it.isNotEmpty() }
                                 ?.let { normalizedTitles[info.id] = normalizeName(it) }
                         }
+                    }
+
+                    // A listing that succeeds but yields nothing is treated as a failure,
+                    // not as "this playlist is now empty". yt-dlp exits 0 with no entries
+                    // for a playlist that has gone private, is region-blocked, or whose
+                    // page it could not parse -- and the delete step cannot tell that
+                    // apart from a genuine emptying, so it would remove every file the
+                    // playlist owns. Deleting a whole playlist's worth of audio because a
+                    // listing came back thin is exactly the failure the abort-on-error
+                    // rule above exists to prevent; this is the same rule for the case
+                    // that reports success.
+                    //
+                    // Genuinely emptying a playlist is rare, and recoverable: the user can
+                    // remove it here and the files go with it. A wrong bulk delete is not.
+                    if (listed == 0) {
+                        failures++
+                        Log.e(
+                            TAG,
+                            "fetchRemoteVideos: '${entry.title}' listed 0 videos, treating " +
+                                    "as a failure rather than deleting its files"
+                        )
                     }
                 }.onFailure {
                     failures++

@@ -165,6 +165,35 @@ fun getCachedThumbnailPath(context: Context, uri: Uri): String? =
         .onFailure { Log.e(TAG, "getCachedThumbnailPath: failed for $uri", it) }
         .getOrNull()
 
+/**
+ * Drops everything cached about one audio file, for when it is deleted.
+ *
+ * Two independent caches accumulate per track and neither lives beside the audio, so
+ * deleting the file left both behind: the artwork this app extracts (under `filesDir`,
+ * keyed by a hash of the source URI) and the `.info.json` plus thumbnail sidecars yt-dlp
+ * writes at download time (in `cacheDir`, keyed by the audio basename).
+ *
+ * Leaking them is not only wasted space. The sidecars are keyed by *basename*, and the
+ * library list reads a track's title and uploader straight out of them -- so a track that
+ * was deleted and later re-downloaded picked up the previous download's metadata, and a
+ * new track that happened to share a basename inherited a stranger's.
+ *
+ * [uri] is the file's own URI where there is one (the SAF path); [name] is its display
+ * name, with or without the extension. Best-effort throughout: a cache entry that cannot
+ * be removed is not worth failing a delete the user asked for.
+ */
+fun clearCachedDataForAudio(context: Context, uri: Uri?, name: String) {
+    val baseName = name.substringBeforeLast('.')
+
+    runCatching { uri?.let { thumbnailCacheFile(context, it).delete() } }
+        .onFailure { Log.e(TAG, "clearCachedDataForAudio: artwork cache for $name", it) }
+
+    runCatching {
+        File(context.cacheDir, "$baseName.info.json").delete()
+        THUMBNAIL_EXTENSIONS.forEach { File(context.cacheDir, "$baseName.$it").delete() }
+    }.onFailure { Log.e(TAG, "clearCachedDataForAudio: sidecars for $name", it) }
+}
+
 object FileUtil {
     inline fun openFile(path: String, onFailureCallback: (Throwable) -> Unit) =
         path.runCatching {

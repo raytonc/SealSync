@@ -16,6 +16,12 @@ object YouTubeApiService {
     private val PLAYLIST_ID_PATTERN = Regex("[?&]list=([a-zA-Z0-9_-]+)")
 
     /**
+     * Ceiling on pages walked by [getChannelPlaylists], at 50 playlists per page. Well
+     * past any real channel, and what keeps a misbehaving token from looping forever.
+     */
+    private const val MAX_PLAYLIST_PAGES = 20
+
+    /**
      * One client for the whole app, built lazily on first use.
      *
      * Every call used to construct its own [YouTube] with its own [NetHttpTransport], and
@@ -190,6 +196,14 @@ object YouTubeApiService {
             return@withContext try {
                 val playlists = mutableListOf<ChannelPlaylistInfo>()
                 var nextPageToken: String? = null
+                // The loop below is driven entirely by a token the server chooses, so it
+                // needs its own stopping condition. A provider that echoes a token back
+                // unchanged -- or simply keeps issuing them -- would otherwise spin here
+                // indefinitely, burning API quota a page at a time against a key the user
+                // has a hard daily budget for. Both guards below are belt and braces: a
+                // repeated token stops immediately, and the page cap bounds the rest.
+                val seenTokens = mutableSetOf<String>()
+                var pages = 0
 
                 do {
                     val request = youtube.playlists()
@@ -222,8 +236,18 @@ object YouTubeApiService {
                         )
                     }
 
+                    pages++
                     nextPageToken = response.nextPageToken
+                        ?.takeIf { pages < MAX_PLAYLIST_PAGES && seenTokens.add(it) }
                 } while (nextPageToken != null)
+
+                if (pages >= MAX_PLAYLIST_PAGES) {
+                    Log.w(
+                        TAG,
+                        "getChannelPlaylists: stopped at the $MAX_PLAYLIST_PAGES-page cap " +
+                                "with ${playlists.size} playlists for channel $channelId"
+                    )
+                }
 
                 playlists
             } catch (e: Exception) {

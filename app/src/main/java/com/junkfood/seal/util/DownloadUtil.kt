@@ -58,6 +58,10 @@ object DownloadUtil {
      */
     private const val AUDIO_FORMAT = "bestaudio/best"
 
+    /** Retries and per-socket timeout for a playlist listing. See [getPlaylistOrVideoInfo]. */
+    private const val LISTING_RETRIES = "3"
+    private const val LISTING_SOCKET_TIMEOUT_SECONDS = "20"
+
     /**
      * Playlist entries carry the video id, and a watch URL built from it resolves straight
      * to the video. Addressing the playlist with `--playlist-items` instead makes yt-dlp
@@ -95,8 +99,18 @@ object DownloadUtil {
             val request = YoutubeDLRequest(playlistURL).apply {
                 addOption("--flat-playlist")
                 addOption("--dump-single-json")
-                addOption("-R", "1")
-                addOption("--socket-timeout", "5")
+                // A listing that fails aborts the entire sync -- the delete step cannot
+                // tell a playlist that would not load from one that was emptied, so it
+                // refuses to run on a partial picture. That makes a transient timeout
+                // expensive: it costs the whole run, downloads included.
+                //
+                // The old 5s socket timeout with a single retry was tuned for a UI probe
+                // that could afford to give up and let the user tap again. On a phone
+                // switching cells or waking a radio, a first request routinely takes
+                // longer than that, and one retry did not cover it. Both are raised so a
+                // slow network delays the sync instead of aborting it.
+                addOption("-R", LISTING_RETRIES)
+                addOption("--socket-timeout", LISTING_SOCKET_TIMEOUT_SECONDS)
             }
             // The process id must be unique across concurrent launches: the wrapper keeps a
             // map keyed by it and throws on a duplicate, and nothing saves a playlist URL

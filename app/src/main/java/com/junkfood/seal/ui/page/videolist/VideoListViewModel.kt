@@ -9,6 +9,7 @@ import com.junkfood.seal.App
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.THUMBNAIL_EXTENSIONS
+import com.junkfood.seal.util.clearCachedDataForAudio
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -195,6 +196,13 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
                             } else {
                                 fileInfo.file?.let(::deleteFileWithMetadata)
                             }
+                            // Both paths: the extracted artwork and the download's
+                            // sidecars live in app storage, not beside the audio, so
+                            // nothing above reaches them. Left behind they grow without
+                            // bound and, because the sidecars are keyed by basename, are
+                            // read back as the metadata for whatever is downloaded under
+                            // that name next.
+                            clearCachedDataForAudio(App.context, fileInfo.uri, fileInfo.name)
                         }.onFailure {
                             Log.e(TAG, "deleteFiles: failed to delete ${fileInfo.name}", it)
                         }
