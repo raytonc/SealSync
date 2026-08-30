@@ -53,7 +53,7 @@ sealed class Version(
 
 val currentVersion: Version = Version.Stable(
     versionMajor = 1,
-    versionMinor = 14,
+    versionMinor = 15,
     versionPatch = 0,
 )
 
@@ -90,7 +90,7 @@ android {
         applicationId = "com.junkfood.seal"
         minSdk = 21
         targetSdk = 34
-        versionCode = 11400
+        versionCode = 11500
 
         if (splitApks) {
             splits {
