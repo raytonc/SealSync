@@ -1,10 +1,12 @@
 package com.junkfood.seal.ui.page.settings
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -43,6 +45,7 @@ import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.PreferenceItem
 import com.junkfood.seal.ui.component.SmallTopAppBar
+import com.junkfood.seal.ui.page.UpdateDialogImpl
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateString
@@ -52,11 +55,14 @@ import com.junkfood.seal.util.UpdateUtil
 import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.yausername.youtubedl_android.YoutubeDL
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.automirrored.rounded.AddToHomeScreen
 import androidx.compose.material.icons.rounded.Update
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -73,6 +79,50 @@ fun SettingsPage(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     val uriHandler = LocalUriHandler.current
+
+    // Manual app-update check. The automatic one runs once per cold start from HomeEntry,
+    // which gives no way to ask on demand and no answer when the app is already current.
+    //
+    // The version is read from the package manager rather than a generated constant: this
+    // module does not enable the buildConfig feature, and this is the same source the
+    // updater compares against, so the two cannot disagree.
+    val installedVersion = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+    }
+    // A finished download still has to reach the package installer, and on O+ that needs
+    // REQUEST_INSTALL_PACKAGES -- or, if the user denies it, a trip to the system screen
+    // that grants it. Without these the update downloaded and then silently did nothing.
+    val installSettingsLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            UpdateUtil.installLatestApk()
+        }
+    val installPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            UpdateUtil.installLatestApk()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!context.packageManager.canRequestPackageInstalls()) {
+                installSettingsLauncher.launch(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${context.packageName}"),
+                    )
+                )
+            } else {
+                UpdateUtil.installLatestApk()
+            }
+        }
+    }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var latestRelease by remember { mutableStateOf(UpdateUtil.LatestRelease()) }
+    var updateDownloadStatus by remember {
+        mutableStateOf(UpdateUtil.DownloadStatus.NotYet as UpdateUtil.DownloadStatus)
+    }
+    val updateJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     val scope = rememberCoroutineScope()
     var isUpdating by remember { mutableStateOf(false) }
@@ -228,6 +278,62 @@ fun SettingsPage(
             item {
                 SettingGroup {
                     PreferenceItem(
+                        title = stringResource(R.string.check_for_updates),
+                        description = stringResource(
+                            R.string.check_for_updates_desc, installedVersion
+                        ),
+                        // A spinner in place of the icon while the check is in flight, the
+                        // same way the yt-dlp row above reports itself.
+                        leadingIcon = {
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier
+                                        .padding(start = 8.dp, end = 16.dp)
+                                        .size(24.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.SystemUpdate,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .padding(start = 8.dp, end = 16.dp)
+                                        .size(24.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                    ) {
+                        if (isCheckingUpdate) return@PreferenceItem
+                        scope.launch {
+                            isCheckingUpdate = true
+                            runCatching {
+                                withContext(Dispatchers.IO) { UpdateUtil.checkForUpdate() }
+                            }.onSuccess { release ->
+                                if (release != null) {
+                                    latestRelease = release
+                                    showUpdateDialog = true
+                                } else {
+                                    // The silent case is the whole reason this exists: a
+                                    // check that finds nothing has to say so, or the button
+                                    // is indistinguishable from one that does not work.
+                                    ToastUtil.showToast(
+                                        context.getString(
+                                            R.string.app_up_to_date, installedVersion
+                                        )
+                                    )
+                                }
+                            }.onFailure { th ->
+                                th.printStackTrace()
+                                ToastUtil.showToast(
+                                    context.getString(R.string.app_update_check_failed)
+                                )
+                            }
+                            isCheckingUpdate = false
+                        }
+                    }
+
+                    PreferenceItem(
                         title = stringResource(R.string.readme),
                         description = stringResource(R.string.readme_desc),
                         icon = Icons.Rounded.Info
@@ -242,6 +348,41 @@ fun SettingsPage(
                     ) { onNavigateTo(Route.CREDITS) }
                 }
             }
+        }
+
+        if (showUpdateDialog) {
+            UpdateDialogImpl(
+                onDismissRequest = {
+                    showUpdateDialog = false
+                    updateJob.value?.cancel()
+                },
+                title = latestRelease.name.toString(),
+                onConfirmUpdate = {
+                    updateJob.value = scope.launch(Dispatchers.IO) {
+                        runCatching {
+                            UpdateUtil.downloadApk(latestRelease = latestRelease)
+                                .collect { status ->
+                                    updateDownloadStatus = status
+                                    if (status is UpdateUtil.DownloadStatus.Finished) {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                            installPermissionLauncher.launch(
+                                                Manifest.permission.REQUEST_INSTALL_PACKAGES
+                                            )
+                                        } else {
+                                            UpdateUtil.installLatestApk()
+                                        }
+                                    }
+                                }
+                        }.onFailure {
+                            it.printStackTrace()
+                            updateDownloadStatus = UpdateUtil.DownloadStatus.NotYet
+                            ToastUtil.showToast(context.getString(R.string.app_update_failed))
+                        }
+                    }
+                },
+                releaseNote = latestRelease.body.toString(),
+                downloadStatus = updateDownloadStatus,
+            )
         }
 
         if (showApiKeyDialog) {

@@ -35,6 +35,10 @@
 
     <string name="copy_error_report">Error report</string>
     <string name="app_update_failed">Failed to update to the latest version</string>
+    <string name="check_for_updates">Check for updates</string>
+    <string name="check_for_updates_desc">Current version: %1$s</string>
+    <string name="app_up_to_date">SealSync is up to date (%1$s)</string>
+    <string name="app_update_check_failed">Could not check for updates. Please make sure you are connected to the Internet.</string>
     <string name="update">Update</string>
     <string name="file_unavailable">This file is no longer available</string>
     <string name="filesize_mb">%.2f MB</string>
