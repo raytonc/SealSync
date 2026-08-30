@@ -42,7 +42,6 @@ const val sealUpstreamUrl = "https://github.com/JunkFood02/Seal"
 const val youtubedlAndroidUrl = "https://github.com/yausername/youtubedl-android"
 const val ytdlpUrl = "https://github.com/yt-dlp/yt-dlp"
 const val readYou = "https://github.com/Ashinch/ReadYou"
-const val musicYou = "https://github.com/Kyant0/MusicYou"
 const val dvd = "https://github.com/yausername/dvd"
 const val icons8 = "https://icons8.com/"
 const val materialIcon = "https://fonts.google.com/icons"
@@ -76,7 +75,6 @@ fun CreditsPage(onNavigateBack: () -> Unit) {
         Credit("youtubedl-android", GPL_V3, youtubedlAndroidUrl),
         Credit("yt-dlp", UNLICENSE, ytdlpUrl),
         Credit("Read You", GPL_V3, readYou),
-//        Credit("Music You"),
         Credit("dvd", GPL_V3, dvd),
         Credit("Accompanist", APACHE_V2, accompanist),
         Credit("Material Design 3", APACHE_V2, material3),

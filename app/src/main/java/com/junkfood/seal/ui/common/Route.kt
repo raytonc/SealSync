@@ -8,6 +8,3 @@ object Route {
     const val SETTINGS_PAGE = "settings_page"
     const val CREDITS = "credits"
 }
-
-infix fun String.arg(arg: String) = "$this/{$arg}"
-infix fun String.id(id: Int) = "$this/$id"

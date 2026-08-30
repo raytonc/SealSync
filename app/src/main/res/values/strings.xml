@@ -1,13 +1,11 @@
 <resources>
     <string name="app_name" translatable="false">SealSync</string>
     <string name="sync_complete">Sync complete</string>
-    <string name="sync_already_synced">Folder is already synced</string>
     <string name="sync_no_playlists">No playlists to sync</string>
     <string name="sync_no_api_key">YouTube API key not configured. Please add one in Settings.</string>
     <string name="sync_no_playlist_data">Sync aborted: no playlist data available</string>
     <string name="sync_fetch_failed">Could not fetch %1$d playlist(s). Sync aborted to avoid deleting files.</string>
     <string name="sync_scan_failed">Could not scan the audio folder: %1$s</string>
-    <string name="sync_summary">Sync complete: %1$d downloaded, %2$d deleted</string>
     <string name="sync_downloaded">%1$d downloaded</string>
     <string name="sync_deleted">%1$d deleted</string>
     <string name="directory_unsupported">This directory is not supported. Using the default directory.</string>
@@ -17,7 +15,6 @@
     <string name="yt_dlp_update_fail">Could not install the latest yt-dlp version. Please make sure you are connected to the Internet.</string>
     <string name="permission_denied">Permission denied</string>
     <string name="download_error_msg">Could not download file</string>
-    <string name="fetch_info_error_msg">Could not fetch video info</string>
     <string name="task_running">An existing download task is already running</string>
     <string name="ytdlp_update">Click to install the latest yt-dlp version</string>
     <string name="ytdlp_update_action">Update yt-dlp</string>

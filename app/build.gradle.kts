@@ -270,8 +270,11 @@ dependencies {
     androidTestImplementation(libs.androidx.test.espresso.core)
 //  androidTestImplementation(libs.androidx.compose.ui.test)
 
-    //UI debugging library for Jetpack Compose
-    implementation(libs.androidx.compose.ui.tooling)
+    // The Compose layout inspector. Debug-only: it exists to be attached to from Android
+    // Studio, and as a plain `implementation` it was compiled into release builds too,
+    // carrying its tooling classes into the shipped APK for nothing. The `@Preview`
+    // annotation itself comes from ui-tooling-preview, which stays in the main bundle.
+    debugImplementation(libs.androidx.compose.ui.tooling)
 
 }
 

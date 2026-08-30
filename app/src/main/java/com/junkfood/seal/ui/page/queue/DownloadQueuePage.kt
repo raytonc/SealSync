@@ -34,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -131,9 +132,11 @@ fun DownloadQueuePage(onNavigateBack: () -> Unit) {
                 // Ordered by what the reader is looking for, not by the run's own order:
                 // what is moving now, then what is coming, then the record of what happened.
                 // Within each group the run's order is kept.
-                val active = queue.filter { it.status is TrackDownload.Status.Downloading }
-                val waiting = queue.filter { it.status is TrackDownload.Status.Queued }
-                val finished = queue.filter { it.isTerminal }
+                //
+                // Grouped in one pass and remembered against the queue: this recomposes on
+                // every progress tick of every active download, and three independent
+                // filters meant walking the whole run three times for each of them.
+                val (active, waiting, finished) = remember(queue) { queue.groupByStatus() }
 
                 LazyColumn(
                     modifier = Modifier
@@ -180,6 +183,27 @@ fun DownloadQueuePage(onNavigateBack: () -> Unit) {
             }
         }
     }
+}
+
+/** The queue split into the three sections the list renders, in the run's own order. */
+private data class QueueSections(
+    val active: List<TrackDownload>,
+    val waiting: List<TrackDownload>,
+    val finished: List<TrackDownload>,
+)
+
+private fun List<TrackDownload>.groupByStatus(): QueueSections {
+    val active = mutableListOf<TrackDownload>()
+    val waiting = mutableListOf<TrackDownload>()
+    val finished = mutableListOf<TrackDownload>()
+    forEach { track ->
+        when {
+            track.status is TrackDownload.Status.Downloading -> active
+            track.status is TrackDownload.Status.Queued -> waiting
+            else -> finished
+        } += track
+    }
+    return QueueSections(active, waiting, finished)
 }
 
 /**

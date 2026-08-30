@@ -13,6 +13,26 @@ import java.net.URLDecoder
 object YouTubeApiService {
     private const val TAG = "YouTubeApiService"
 
+    /** The `list=` query parameter every playlist URL form carries. Compiled once. */
+    private val PLAYLIST_ID_PATTERN = Regex("[?&]list=([a-zA-Z0-9_-]+)")
+
+    /**
+     * One client for the whole app, built lazily on first use.
+     *
+     * Every call used to construct its own [YouTube] with its own [NetHttpTransport], and
+     * a transport owns a connection pool -- so a sync, which refreshes every playlist's
+     * metadata at once, opened a fresh pool per playlist and threw each away after a single
+     * request. Sharing one lets those requests reuse connections (and their TLS handshakes)
+     * instead of renegotiating for each. The client is stateless and documented as
+     * thread-safe; the API key is a per-request parameter, not client state, so nothing
+     * here is tied to one caller.
+     */
+    private val youtube: YouTube by lazy {
+        YouTube.Builder(NetHttpTransport(), GsonFactory.getDefaultInstance(), null)
+            .setApplicationName("SealSync")
+            .build()
+    }
+
     data class PlaylistInfo(
         val title: String,
         val description: String?,
@@ -35,11 +55,7 @@ object YouTubeApiService {
         return try {
             val decodedUrl = URLDecoder.decode(url, "UTF-8")
 
-            // Pattern 1: list= parameter
-            val listPattern = Regex("[?&]list=([a-zA-Z0-9_-]+)")
-            val match = listPattern.find(decodedUrl)
-
-            match?.groupValues?.get(1)
+            PLAYLIST_ID_PATTERN.find(decodedUrl)?.groupValues?.get(1)
         } catch (e: Exception) {
             Log.e(TAG, "Error extracting playlist ID", e)
             null
@@ -58,14 +74,6 @@ object YouTubeApiService {
             }
 
             return@withContext try {
-                val youtube = YouTube.Builder(
-                    NetHttpTransport(),
-                    GsonFactory.getDefaultInstance(),
-                    null
-                )
-                    .setApplicationName("SealSync")
-                    .build()
-
                 // Fetch playlist metadata
                 val playlistRequest = youtube.playlists()
                     .list(listOf("snippet", "contentDetails"))
@@ -152,14 +160,6 @@ object YouTubeApiService {
     suspend fun getChannelIdFromHandle(handle: String, apiKey: String): String? =
         withContext(Dispatchers.IO) {
             return@withContext try {
-                val youtube = YouTube.Builder(
-                    NetHttpTransport(),
-                    GsonFactory.getDefaultInstance(),
-                    null
-                )
-                    .setApplicationName("SealSync")
-                    .build()
-
                 // Clean the handle (remove @ if present)
                 val cleanHandle = handle.removePrefix("@")
 
@@ -190,14 +190,6 @@ object YouTubeApiService {
     suspend fun getChannelPlaylists(channelId: String, apiKey: String): List<ChannelPlaylistInfo>? =
         withContext(Dispatchers.IO) {
             return@withContext try {
-                val youtube = YouTube.Builder(
-                    NetHttpTransport(),
-                    GsonFactory.getDefaultInstance(),
-                    null
-                )
-                    .setApplicationName("SealSync")
-                    .build()
-
                 val playlists = mutableListOf<ChannelPlaylistInfo>()
                 var nextPageToken: String? = null
 

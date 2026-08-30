@@ -1,6 +1,5 @@
 package com.junkfood.seal
 
-import android.app.Notification
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
@@ -52,10 +51,6 @@ class DownloadService : Service() {
     }
 
     override fun onBind(intent: Intent): IBinder = DownloadServiceBinder()
-
-    fun startForegroundWithNotification(notification: Notification) {
-        startForeground(SERVICE_NOTIFICATION_ID, notification)
-    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: action=${intent?.action}")

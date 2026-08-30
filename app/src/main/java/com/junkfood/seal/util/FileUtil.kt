@@ -18,8 +18,14 @@ import java.security.MessageDigest
 
 private const val TAG = "FileUtil"
 
-/** Extensions yt-dlp may produce for extracted audio. */
-private val AUDIO_EXTENSIONS =
+/**
+ * Extensions yt-dlp may produce for extracted audio.
+ *
+ * The single source of truth for "is this file one of ours": the sync scan, the library
+ * scan and the thumbnail fetcher all have to agree on it, and three private copies of the
+ * same set meant adding a container to one of them silently left the others behind.
+ */
+val AUDIO_EXTENSIONS =
     setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
 
 /** Sidecar files written by the download's thumbnail/metadata options. */

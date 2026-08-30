@@ -41,9 +41,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -99,16 +100,25 @@ fun VideoListPage(
     }
 
     val view = LocalView.current
+    // Hoisted out of the row: SimpleDateFormat is comparatively expensive to construct,
+    // and every row was building its own.
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()) }
     var isSelectEnabled by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showDeleteMultipleDialog by remember { mutableStateOf(false) }
     var fileToDelete by remember { mutableStateOf<AudioFileInfo?>(null) }
 
-    val selectedFiles = remember { mutableStateListOf<AudioFileInfo>() }
+    // Keyed by the row's stable identity rather than held as a list of items: the row
+    // needs "am I selected?" on every recomposition, and over a list that was a linear
+    // scan per row -- O(rows x selected) for each frame of a multi-select.
+    val selectedKeys = remember { mutableStateMapOf<String, Unit>() }
+    val selectedFiles by remember(audioFiles) {
+        derivedStateOf { audioFiles.filter { it.selectionKey in selectedKeys } }
+    }
 
     BackHandler(isSelectEnabled) {
         isSelectEnabled = false
-        selectedFiles.clear()
+        selectedKeys.clear()
     }
 
     Scaffold(
@@ -218,25 +228,17 @@ fun VideoListPage(
                     .padding(paddingValues)
                     .padding(horizontal = 16.dp)
             ) {
-                items(audioFiles, key = { it.uri?.toString() ?: it.file?.absolutePath ?: it.name }) { fileInfo ->
+                items(audioFiles, key = { it.selectionKey }) { fileInfo ->
+                    val key = fileInfo.selectionKey
                     AudioFileItem(
                         fileInfo = fileInfo,
                         isSelectEnabled = isSelectEnabled,
-                        isSelected = selectedFiles.contains(fileInfo),
-                        onSelect = {
-                            if (selectedFiles.contains(fileInfo)) {
-                                selectedFiles.remove(fileInfo)
-                            } else {
-                                selectedFiles.add(fileInfo)
-                            }
-                        },
+                        isSelected = key in selectedKeys,
+                        dateFormat = dateFormat,
+                        onSelect = { selectedKeys.toggleSelection(key) },
                         onClick = {
                             if (isSelectEnabled) {
-                                if (selectedFiles.contains(fileInfo)) {
-                                    selectedFiles.remove(fileInfo)
-                                } else {
-                                    selectedFiles.add(fileInfo)
-                                }
+                                selectedKeys.toggleSelection(key)
                             } else {
                                 // Prefer the SAF URI, which is already directly openable.
                                 val uri = fileInfo.uri
@@ -257,7 +259,7 @@ fun VideoListPage(
                         },
                         onLongClick = {
                             isSelectEnabled = true
-                            selectedFiles.add(fileInfo)
+                            selectedKeys[key] = Unit
                         },
                         onDeleteClick = {
                             fileToDelete = fileInfo
@@ -305,8 +307,11 @@ fun VideoListPage(
             },
             confirmButton = {
                 ConfirmButton {
+                    // Copied before the keys are cleared: selectedFiles is derived from
+                    // them, so handing the live list over and then clearing would leave
+                    // the delete with nothing to do.
                     viewModel.deleteFiles(selectedFiles.toList())
-                    selectedFiles.clear()
+                    selectedKeys.clear()
                     isSelectEnabled = false
                     showDeleteMultipleDialog = false
                 }
@@ -327,13 +332,13 @@ fun AudioFileItem(
     fileInfo: AudioFileInfo,
     isSelectEnabled: Boolean,
     isSelected: Boolean,
+    dateFormat: SimpleDateFormat,
     onSelect: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
     val view = LocalView.current
-    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()) }
 
     Card(
         modifier = Modifier
@@ -431,4 +436,21 @@ fun AudioFileItem(
             }
         }
     }
+}
+
+/**
+ * Stable identity for a row, used both as the [LazyColumn] key and as the selection key.
+ * The SAF URI where there is one, the absolute path for legacy File-API entries, and the
+ * name as a last resort.
+ */
+private val AudioFileInfo.selectionKey: String
+    get() = uri?.toString() ?: file?.absolutePath ?: name
+
+/**
+ * A set keyed for O(1) membership. Backed by a snapshot *map* rather than a set because
+ * the Compose runtime this project builds against has no observable set primitive; the
+ * value is ignored.
+ */
+private fun MutableMap<String, Unit>.toggleSelection(key: String) {
+    if (remove(key) == null) put(key, Unit)
 }

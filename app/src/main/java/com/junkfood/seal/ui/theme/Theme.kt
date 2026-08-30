@@ -16,7 +16,6 @@ import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextDirection
 import androidx.core.view.WindowCompat
-import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.material.color.MaterialColors
 import com.kyant.monet.dynamicColorScheme
 
@@ -56,14 +55,25 @@ fun SealTheme(
             )
             else this
         }
-    val window = LocalView.current.context.findWindow()
     val view = LocalView.current
+    val window = view.context.findWindow()
 
-    window?.let {
-        WindowCompat.getInsetsController(it, view).isAppearanceLightStatusBars = darkTheme
+    // Transparent bars with icon contrast picked to match the theme. Done through the
+    // platform insets controller rather than accompanist's SystemUiController, which is
+    // deprecated and did the same two things.
+    //
+    // `isAppearanceLight*Bars` means "draw *dark* icons, for a light background", so it
+    // tracks !darkTheme. The old code set the status-bar flag to `darkTheme` and then had
+    // accompanist immediately set it again from `!darkTheme` -- the two disagreed, and only
+    // the second one stuck. The navigation bar was never given the same treatment at all.
+    if (window != null && !view.isInEditMode) {
+        window.statusBarColor = Color.Transparent.toArgb()
+        window.navigationBarColor = Color.Transparent.toArgb()
+        WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = !darkTheme
+            isAppearanceLightNavigationBars = !darkTheme
+        }
     }
-
-    rememberSystemUiController(window).setSystemBarsColor(Color.Transparent, !darkTheme)
 
     ProvideTextStyle(
         value = LocalTextStyle.current.copy(

@@ -129,14 +129,11 @@ kotlin-gradlePlugin = { id = "org.jetbrains.kotlin.android", version.ref = "kotl
 kotlin-ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 
 [bundles]
-accompanist = [
-    #    "accompanist-navigation-animation",
-    "accompanist-permissions",
-    "accompanist-systemuicontroller",
-    "accompanist-webview",
-    "accompanist-pager-layouts",
-    "accompanist-pager-indicators",
-    "accompanist-flowlayout"]
+# Only what the app actually imports. Five other accompanist artifacts used to be bundled
+# here: webview, pager and pager-indicators were never referenced at all, while flowlayout
+# and systemuicontroller are both deprecated and now go through their platform equivalents
+# (Compose Foundation's FlowRow and WindowInsetsControllerCompat).
+accompanist = ["accompanist-permissions"]
 
 androidxCompose = ["androidx-compose-ui",
     "androidx-compose-ui-tooling-preview",

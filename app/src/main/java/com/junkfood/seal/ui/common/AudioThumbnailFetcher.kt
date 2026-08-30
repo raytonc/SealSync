@@ -10,6 +10,7 @@ import coil.fetch.Fetcher
 import coil.fetch.SourceResult
 import coil.key.Keyer
 import coil.request.Options
+import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.cacheEmbeddedThumbnail
 import com.junkfood.seal.util.extractEmbeddedThumbnail
 import com.junkfood.seal.util.getCachedThumbnailPath
@@ -41,9 +42,6 @@ class AudioThumbnailFetcher(
 
     companion object {
         private const val TAG = "AudioThumbnailFetcher"
-
-        // Audio file extensions that might contain embedded thumbnails
-        private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
     }
 
     override suspend fun fetch(): FetchResult = withContext(Dispatchers.IO) {

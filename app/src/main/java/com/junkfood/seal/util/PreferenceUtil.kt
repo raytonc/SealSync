@@ -38,10 +38,8 @@ private const val PALETTE_STYLE = "palette_style"
 private const val DYNAMIC_COLOR = "dynamic_color"
 private const val HIGH_CONTRAST = "high_contrast"
 
+/** Update channels. Only the non-default value of each pair is ever tested for. */
 const val STABLE = 0
-const val PRE_RELEASE = 1
-
-const val YT_DLP_STABLE = 0
 const val YT_DLP_NIGHTLY = 1
 
 private const val INTERVAL_WEEK = 86_400_000L * 7

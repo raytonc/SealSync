@@ -7,18 +7,26 @@ import androidx.lifecycle.viewModelScope
 import androidx.documentfile.provider.DocumentFile
 import com.junkfood.seal.App
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
+import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import javax.inject.Inject
+
+private const val TAG = "VideoListViewModel"
+
+/** Sidecar image files a download may have left alongside an audio file. */
+private val THUMBNAIL_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp")
 
 data class AudioFileInfo(
     val uri: Uri? = null,  // For DocumentFile (SAF) - primary method
@@ -49,8 +57,6 @@ data class ThumbnailInfo(
 @HiltViewModel
 class VideoListViewModel @Inject constructor() : ViewModel() {
 
-    private val TAG = "VideoListViewModel"
-
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -70,221 +76,143 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             try {
-                // Try to use SAF DocumentFile first (works with scoped storage)
                 val uriString = AUDIO_DIRECTORY_URI.getString()
+                val files =
+                    if (uriString.isNotEmpty()) scanWithSaf(Uri.parse(uriString))
+                    else scanWithFileApi()
 
-                val files = if (uriString.isNotEmpty()) {
-                // Use DocumentFile (SAF) - this works with scoped storage
-                try {
-                    val treeUri = Uri.parse(uriString)
-                    Log.d(TAG, "refreshFileList: Scanning using DocumentFile with URI: $treeUri")
-
-                    val audioFiles = scanAudioFilesWithDocumentFile(App.context, treeUri)
-                    Log.d(TAG, "refreshFileList: Found ${audioFiles.size} audio files via DocumentFile")
-
-                    audioFiles.map { audioData ->
-                        // Extract base name from filename (without extension)
-                        val baseName = audioData.name.substringBeforeLast('.')
-
-                        // Read metadata from cache
-                        val metadata = readMetadataFromCache(baseName)
-
-                        // Pass the audio URI directly to Coil
-                        // Our custom AudioThumbnailFetcher will lazily extract thumbnails on-demand
-                        // This makes the list appear instantly and thumbnails load progressively
-                        val thumbnailUrl = audioData.uri.toString()
-
-                        AudioFileInfo(
-                            uri = audioData.uri,
-                            name = audioData.name,
-                            size = audioData.size,
-                            lastModified = audioData.lastModified,
-                            thumbnailUrl = thumbnailUrl,
-                            videoTitle = metadata?.title,
-                            videoAuthor = metadata?.uploader ?: metadata?.channel
-                        )
-                    }.sortedBy { it.videoTitle?.lowercase() ?: it.name.lowercase() }
-                } catch (e: Exception) {
-                    Log.e(TAG, "refreshFileList: Failed to scan with DocumentFile", e)
-                    emptyList()
-                }
-            } else {
-                // Fallback to File API (legacy, won't work with scoped storage on /Download)
-                Log.w(TAG, "refreshFileList: No URI set, falling back to File API (may not work)")
-                val audioDir = File(App.audioDownloadDir)
-                Log.d(TAG, "refreshFileList: Scanning directory: ${App.audioDownloadDir}")
-
-                if (audioDir.exists() && audioDir.isDirectory) {
-                    try {
-                        audioDir.walkTopDown()
-                            .filter { file ->
-                                file.isFile &&
-                                        file.extension.lowercase() in listOf(
-                                    "mp3",
-                                    "m4a",
-                                    "aac",
-                                    "opus",
-                                    "ogg",
-                                    "oga",
-                                    "webm",
-                                    "flac",
-                                    "wav"
-                                ) &&
-                                        !file.name.startsWith(".trashed-")
-                            }
-                            .map { file ->
-                                val metadata = readMetadataFromJson(file)
-                                val thumbnailUrl = findThumbnailFile(file) ?: metadata?.thumbnail
-
-                                AudioFileInfo(
-                                    file = file,
-                                    name = file.name,
-                                    size = file.length(),
-                                    lastModified = file.lastModified(),
-                                    thumbnailUrl = thumbnailUrl,
-                                    videoTitle = metadata?.title,
-                                    videoAuthor = metadata?.uploader ?: metadata?.channel
-                                )
-                            }
-                            .sortedBy { it.videoTitle?.lowercase() ?: it.name.lowercase() }
-                            .toList()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "refreshFileList: Failed to scan with File API", e)
-                        emptyList()
-                    }
-                } else {
-                    Log.e(TAG, "refreshFileList: Directory does not exist or is not valid")
-                    emptyList()
-                }
-            }
-
-                Log.d(TAG, "refreshFileList: Total files found: ${files.size}")
-
-                withContext(Dispatchers.Main) {
-                    _audioFilesFlow.value = files
-                }
+                Log.d(TAG, "refreshFileList: total files found: ${files.size}")
+                // A StateFlow is safe to write from any thread and Compose collects it on
+                // the main one, so there is nothing to hop threads for here.
+                _audioFilesFlow.value = files
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
-    private fun readMetadataFromJson(audioFile: File): VideoInfoJson? {
-        return try {
-            // Try to find .info.json file with same base name
-            val baseName = audioFile.nameWithoutExtension
-            val jsonFile = File(audioFile.parent, "$baseName.info.json")
-
-            if (jsonFile.exists()) {
-                val jsonContent = jsonFile.readText()
-                json.decodeFromString<VideoInfoJson>(jsonContent)
-            } else {
-                null
+    /** The scoped-storage path: the SAF tree the user picked. */
+    private fun scanWithSaf(treeUri: Uri): List<AudioFileInfo> = runCatching {
+        scanAudioFilesWithDocumentFile(App.context, treeUri)
+            .map { audioData ->
+                val metadata = readMetadataFromCache(audioData.name.substringBeforeLast('.'))
+                AudioFileInfo(
+                    uri = audioData.uri,
+                    name = audioData.name,
+                    size = audioData.size,
+                    lastModified = audioData.lastModified,
+                    // Handed to Coil as-is: AudioThumbnailFetcher extracts the embedded
+                    // artwork lazily, so the list renders before any of it is decoded.
+                    thumbnailUrl = audioData.uri.toString(),
+                    videoTitle = metadata?.title,
+                    videoAuthor = metadata?.uploader ?: metadata?.channel
+                )
             }
-        } catch (e: Exception) {
-            null
+            .sortedBy { it.videoTitle?.lowercase() ?: it.name.lowercase() }
+    }.getOrElse {
+        Log.e(TAG, "scanWithSaf: failed to scan $treeUri", it)
+        emptyList()
+    }
+
+    /** Legacy path for installs that predate the folder picker. */
+    private fun scanWithFileApi(): List<AudioFileInfo> {
+        Log.w(TAG, "scanWithFileApi: no SAF URI set, falling back to the File API")
+        val audioDir = File(App.audioDownloadDir)
+        if (!audioDir.isDirectory) {
+            Log.e(TAG, "scanWithFileApi: ${App.audioDownloadDir} is not a directory")
+            return emptyList()
+        }
+
+        return runCatching {
+            audioDir.walkTopDown()
+                .filter {
+                    it.isFile &&
+                            it.extension.lowercase() in AUDIO_EXTENSIONS &&
+                            !it.name.startsWith(".trashed-")
+                }
+                .map { file ->
+                    val metadata = readMetadataFromJson(file)
+                    AudioFileInfo(
+                        file = file,
+                        name = file.name,
+                        size = file.length(),
+                        lastModified = file.lastModified(),
+                        thumbnailUrl = findThumbnailFile(file) ?: metadata?.thumbnail,
+                        videoTitle = metadata?.title,
+                        videoAuthor = metadata?.uploader ?: metadata?.channel
+                    )
+                }
+                .sortedBy { it.videoTitle?.lowercase() ?: it.name.lowercase() }
+                .toList()
+        }.getOrElse {
+            Log.e(TAG, "scanWithFileApi: failed to scan ${App.audioDownloadDir}", it)
+            emptyList()
         }
     }
 
-    private fun readMetadataFromCache(baseName: String): VideoInfoJson? {
-        return try {
-            // Metadata JSON files are stored in cacheDir
-            val cacheDir = App.context.cacheDir
-            val jsonFile = File(cacheDir, "$baseName.info.json")
+    private fun readMetadataFromJson(audioFile: File): VideoInfoJson? =
+        decodeMetadata(File(audioFile.parent, "${audioFile.nameWithoutExtension}.info.json"))
 
-            if (jsonFile.exists()) {
-                val jsonContent = jsonFile.readText()
-                json.decodeFromString<VideoInfoJson>(jsonContent)
-            } else {
+    /** Downloads write their sidecar json into the cache dir, keyed by the audio basename. */
+    private fun readMetadataFromCache(baseName: String): VideoInfoJson? =
+        decodeMetadata(File(App.context.cacheDir, "$baseName.info.json"))
+
+    private fun decodeMetadata(jsonFile: File): VideoInfoJson? {
+        if (!jsonFile.exists()) return null
+        return runCatching { json.decodeFromString<VideoInfoJson>(jsonFile.readText()) }
+            .getOrElse {
+                Log.e(TAG, "decodeMetadata: could not read ${jsonFile.name}", it)
                 null
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "readMetadataFromCache: Failed to read metadata for $baseName", e)
-            null
-        }
     }
 
     private fun findThumbnailFile(audioFile: File): String? {
-        return try {
-            val baseName = audioFile.nameWithoutExtension
-            // Thumbnails are saved to cacheDir, not with the audio files
-            val cacheDir = App.context.cacheDir
-
-            // Look for thumbnail with various extensions
-            val thumbnailExtensions = listOf("jpg", "jpeg", "png", "webp")
-            for (ext in thumbnailExtensions) {
-                val thumbFile = File(cacheDir, "$baseName.$ext")
-                if (thumbFile.exists()) {
-                    // Return absolute path - Coil can load from file paths directly
-                    return thumbFile.absolutePath
-                }
-            }
-            null
-        } catch (e: Exception) {
-            null
-        }
+        // Thumbnails are written to the cache dir, not alongside the audio.
+        val cacheDir = App.context.cacheDir
+        val baseName = audioFile.nameWithoutExtension
+        return THUMBNAIL_EXTENSIONS
+            .asSequence()
+            .map { File(cacheDir, "$baseName.$it") }
+            .firstOrNull { it.exists() }
+            ?.absolutePath
     }
 
+    fun deleteFile(fileInfo: AudioFileInfo) = deleteFiles(listOf(fileInfo))
 
-    fun deleteFile(fileInfo: AudioFileInfo) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                if (fileInfo.uri != null) {
-                    // Use DocumentFile for SAF URIs
-                    val docFile = DocumentFile.fromSingleUri(App.context, fileInfo.uri)
-                    docFile?.delete()
-                    Log.d(TAG, "deleteFile: Deleted via URI: ${fileInfo.name}")
-                } else if (fileInfo.file != null) {
-                    // Use File API for legacy
-                    deleteFileWithMetadata(fileInfo.file)
-                    Log.d(TAG, "deleteFile: Deleted via File: ${fileInfo.name}")
-                }
-                refreshFileList()
-            } catch (e: Exception) {
-                Log.e(TAG, "deleteFile: Failed to delete ${fileInfo.name}", e)
-            }
-        }
-    }
-
+    /**
+     * Deletes the given files and reloads the list once, at the end.
+     *
+     * The deletes are issued concurrently: each SAF delete is a blocking IPC round trip to
+     * the storage provider, so a multi-select of a few dozen files paid that latency once
+     * per file when it could overlap them instead.
+     */
     fun deleteFiles(fileInfos: List<AudioFileInfo>) {
         viewModelScope.launch(Dispatchers.IO) {
-            fileInfos.forEach { fileInfo ->
-                try {
-                    if (fileInfo.uri != null) {
-                        val docFile = DocumentFile.fromSingleUri(App.context, fileInfo.uri)
-                        docFile?.delete()
-                    } else if (fileInfo.file != null) {
-                        deleteFileWithMetadata(fileInfo.file)
+            coroutineScope {
+                fileInfos.map { fileInfo ->
+                    async {
+                        runCatching {
+                            if (fileInfo.uri != null) {
+                                DocumentFile.fromSingleUri(App.context, fileInfo.uri)?.delete()
+                            } else {
+                                fileInfo.file?.let(::deleteFileWithMetadata)
+                            }
+                        }.onFailure {
+                            Log.e(TAG, "deleteFiles: failed to delete ${fileInfo.name}", it)
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "deleteFiles: Failed to delete ${fileInfo.name}", e)
-                }
+                }.awaitAll()
             }
             refreshFileList()
         }
     }
 
+    /** Removes a legacy File-API download along with the sidecars it was saved with. */
     private fun deleteFileWithMetadata(audioFile: File) {
-        try {
-            val baseName = audioFile.nameWithoutExtension
-            val parentDir = audioFile.parentFile
-
-            // Delete the audio file
-            audioFile.delete()
-
-            // Delete associated metadata files
-            if (parentDir != null) {
-                // Delete .info.json file
-                File(parentDir, "$baseName.info.json").takeIf { it.exists() }?.delete()
-
-                // Delete thumbnail files
-                val thumbnailExtensions = listOf("jpg", "jpeg", "png", "webp")
-                for (ext in thumbnailExtensions) {
-                    File(parentDir, "$baseName.$ext").takeIf { it.exists() }?.delete()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "deleteFileWithMetadata: Failed", e)
-        }
+        audioFile.delete()
+        val parentDir = audioFile.parentFile ?: return
+        val baseName = audioFile.nameWithoutExtension
+        File(parentDir, "$baseName.info.json").delete()
+        THUMBNAIL_EXTENSIONS.forEach { File(parentDir, "$baseName.$it").delete() }
     }
 }

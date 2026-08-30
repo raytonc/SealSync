@@ -12,6 +12,7 @@ import com.junkfood.seal.App.Companion.startService
 import com.junkfood.seal.App.Companion.stopService
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
+import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.AudioFileData
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
@@ -34,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -51,10 +53,6 @@ import java.util.concurrent.atomic.AtomicInteger
 object Downloader {
 
     private const val TAG = "Downloader"
-
-    /** Audio containers yt-dlp may produce, used when scanning the destination folder. */
-    private val AUDIO_EXTENSIONS =
-        setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
 
     /**
      * How many videos download at once.
@@ -82,6 +80,16 @@ object Downloader {
      * so the file would be deleted and re-downloaded on every sync.
      */
     private val VIDEO_ID_PATTERN = Regex("\\[([a-zA-Z0-9_-]{6,50})]\\.[^.]+$")
+
+    /**
+     * Everything [normalizeName] strips out.
+     *
+     * Compiled once. It used to be built inline in that function, which a sync calls for
+     * every remote video *and* every local file -- so a library of a few thousand tracks
+     * paid for a few thousand `Pattern.compile` calls per run to apply the same pattern
+     * each time.
+     */
+    private val NON_ALPHANUMERIC = Regex("[^a-z0-9]+")
 
     /**
      * Which step of the sync is running, for the card on the home screen.
@@ -126,6 +134,13 @@ object Downloader {
         data object Updating : State()
     }
 
+    /**
+     * The most recent item failure, for the banner on the home screen.
+     *
+     * Only downloads report here now. A failed *listing* aborts the whole run instead of
+     * failing one item, and says so through the summary card, so the second variant this
+     * used to carry was unreachable.
+     */
     sealed class ErrorState(
         open val url: String = "",
         open val report: String = "",
@@ -133,15 +148,11 @@ object Downloader {
         data class DownloadError(override val url: String, override val report: String) :
             ErrorState(url = url, report = report)
 
-        data class FetchInfoError(override val url: String, override val report: String) :
-            ErrorState(url = url, report = report)
-
         data object None : ErrorState()
 
         val title: String
             @Composable get() = when (this) {
                 is DownloadError -> stringResource(id = R.string.download_error_msg)
-                is FetchInfoError -> stringResource(id = R.string.fetch_info_error_msg)
                 None -> ""
             }
     }
@@ -209,6 +220,25 @@ object Downloader {
     val queueSummary: StateFlow<QueueSummary> = mutableQueue
         .map { it.values.toSummary() }
         .stateIn(applicationScope, SharingStarted.Eagerly, QueueSummary())
+
+    /**
+     * Titles of the items downloading right now, for the home screen's sync card.
+     *
+     * Derived here rather than on the card, which used to collect the whole [queue] just to
+     * pick these few out of it. That made the home screen recompose against a list of every
+     * track in the run on every progress tick of every download -- hundreds of entries, a
+     * few times a second, to render at most [MAX_CONCURRENT_DOWNLOADS] lines. [distinctUntilChanged]
+     * then holds the emission back entirely while only the progress numbers move, which is
+     * most of the time: the set of active titles only changes when an item starts or finishes.
+     */
+    val activeTitles: StateFlow<List<String>> = mutableQueue
+        .map { tracks ->
+            tracks.values.mapNotNull { track ->
+                track.title.takeIf { track.status is TrackDownload.Status.Downloading }
+            }
+        }
+        .distinctUntilChanged()
+        .stateIn(applicationScope, SharingStarted.Eagerly, emptyList())
 
     private fun Collection<TrackDownload>.toSummary(): QueueSummary {
         if (isEmpty()) return QueueSummary()
@@ -536,7 +566,7 @@ object Downloader {
                                         updateTrack(videoId) {
                                             it.copy(status = TrackDownload.Status.Failed(th.toReason()))
                                         }
-                                        reportItemError(th, videoId, isFetchingInfo = false)
+                                        reportItemError(th, videoId)
                                     }
 
                                 // Counted on the way out, not on the way in: with several
@@ -727,7 +757,7 @@ object Downloader {
 
     /** Strips case and punctuation so titles and filenames can be compared. */
     private fun normalizeName(s: String): String =
-        s.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "")
+        s.lowercase(Locale.US).replace(NON_ALPHANUMERIC, "")
 
     /**
      * Marks one track in the run, if it is still part of it. A no-op once the next sync
@@ -866,7 +896,7 @@ object Downloader {
      * Records a failure for one playlist item. The sync keeps going: one unavailable
      * video should not abandon the rest of the run.
      */
-    private fun reportItemError(th: Throwable, url: String?, isFetchingInfo: Boolean) {
+    private fun reportItemError(th: Throwable, url: String?) {
         if (th is YoutubeDL.CanceledException) return
         th.printStackTrace()
         // No toast per failure. Items download several at a time and a bad playlist can
@@ -875,10 +905,8 @@ object Downloader {
         // card carries the count, and the queue screen keeps every one of them with its
         // own message.
 
-        val report = th.message.toString()
         mutableErrorState.update {
-            if (isFetchingInfo) ErrorState.FetchInfoError(url.toString(), report)
-            else ErrorState.DownloadError(url.toString(), report)
+            ErrorState.DownloadError(url.toString(), th.message.toString())
         }
     }
 }

@@ -36,23 +36,12 @@ object UpdateUtil {
     // SealSync, which at best fails signature verification and at worst replaces the app.
     private const val OWNER = "raytonc"
     private const val REPO = "sealsync"
-    private const val ARM64 = "arm64-v8a"
-    private const val ARM32 = "armeabi-v7a"
-    private const val X86 = "x86"
-    private const val X64 = "x86_64"
     private const val TAG = "UpdateUtil"
 
     private val client = OkHttpClient()
-    private val requestForLatestRelease =
-        Request.Builder().url("https://api.github.com/repos/${OWNER}/${REPO}/releases/latest")
-            .build()
-
     private val requestForReleases =
         Request.Builder().url("https://api.github.com/repos/${OWNER}/${REPO}/releases")
             .build()
-
-    private const val ytdlpNightlyBuildRelease =
-        "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest"
 
     private val jsonFormat = Json { ignoreUnknownKeys = true }
 
@@ -199,7 +188,6 @@ object UpdateUtil {
                             break
                         }
 
-                        outputStream.channel
                         outputStream.write(data, 0, bytes)
                         progressBytes += bytes
                         emit(DownloadStatus.Progress(percent = ((progressBytes * 100) / totalBytes).toInt()))
@@ -283,14 +271,10 @@ object UpdateUtil {
             private const val MAJOR = 1_000_000L
         }
 
-        abstract fun toVersionName(): String
         abstract fun toNumber(): Long
 
         class Beta(versionMajor: Int, versionMinor: Int, versionPatch: Int, versionBuild: Int) :
             Version(versionMajor, versionMinor, versionPatch, versionBuild) {
-            override fun toVersionName(): String =
-                "${major}.${minor}.${patch}-beta.$build"
-
             override fun toNumber(): Long =
                 major * MAJOR + minor * MINOR + patch * PATCH + build * BUILD
 
@@ -298,9 +282,6 @@ object UpdateUtil {
 
         class Stable(versionMajor: Int = 0, versionMinor: Int = 0, versionPatch: Int = 0) :
             Version(versionMajor, versionMinor, versionPatch) {
-            override fun toVersionName(): String =
-                "${major}.${minor}.${patch}"
-
             override fun toNumber(): Long =
                 major * MAJOR + minor * MINOR + patch * PATCH + build * BUILD + 100
             // Prioritize stable versions
@@ -314,21 +295,8 @@ object UpdateUtil {
             versionBuild: Int
         ) :
             Version(versionMajor, versionMinor, versionPatch, versionBuild) {
-            override fun toVersionName(): String =
-                "${major}.${minor}.${patch}-rc.$build"
-
             override fun toNumber(): Long =
                 major * MAJOR + minor * MINOR + patch * PATCH + build * BUILD + 25
-        }
-
-        class Alpha(versionMajor: Int = 0, versionMinor: Int = 0, versionPatch: Int = 0) :
-            Version(versionMajor, versionMinor, versionPatch) {
-            override fun toVersionName(): String =
-                "${major}.${minor}.${patch}-alpha.$build"
-
-            override fun toNumber(): Long =
-                major * MAJOR + minor * MINOR + patch * PATCH + build * BUILD + 50
-
         }
 
         override operator fun compareTo(other: Version): Int =

@@ -355,6 +355,18 @@ fun MissingApiKeyBanner(
     }
 }
 
+/**
+ * Formatter for the "older than a week" case.
+ *
+ * Held per thread rather than rebuilt per call: [formatRelativeTime] runs once per playlist
+ * row per recomposition, and constructing a [SimpleDateFormat] parses its pattern and pulls
+ * locale data each time. SimpleDateFormat is not thread-safe, hence one instance per thread
+ * instead of one shared.
+ */
+private val shortDateFormat = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue() = SimpleDateFormat("MMM dd", Locale.getDefault())
+}
+
 /** Relative timestamps read better than dates for something synced multiple times a day. */
 fun formatRelativeTime(timestamp: Long): String {
     val diff = System.currentTimeMillis() - timestamp
@@ -363,7 +375,7 @@ fun formatRelativeTime(timestamp: Long): String {
         diff < 3_600_000 -> "${diff / 60_000}m ago"
         diff < 86_400_000 -> "${diff / 3_600_000}h ago"
         diff < 604_800_000 -> "${diff / 86_400_000}d ago"
-        else -> SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(timestamp))
+        else -> shortDateFormat.get()!!.format(Date(timestamp))
     }
 }
 

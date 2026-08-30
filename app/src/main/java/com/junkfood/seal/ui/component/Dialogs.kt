@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,7 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.SignalCellularConnectedNoInternet4Bar
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,7 +36,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
-import com.google.accompanist.flowlayout.FlowRow
 import com.junkfood.seal.R
 import com.junkfood.seal.ui.theme.FixedAccentColors
 import com.junkfood.seal.ui.theme.SealTheme
@@ -49,7 +49,7 @@ private val ButtonsMainAxisSpacing = 8.dp
 private val ButtonsCrossAxisSpacing = 12.dp
 
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SealDialog(
     modifier: Modifier = Modifier,
@@ -142,8 +142,8 @@ fun SealDialog(
                         MaterialTheme.typography.labelLarge
                     ProvideTextStyle(value = textStyle) {
                         FlowRow(
-                            mainAxisSpacing = ButtonsMainAxisSpacing,
-                            crossAxisSpacing = ButtonsCrossAxisSpacing
+                            horizontalArrangement = Arrangement.spacedBy(ButtonsMainAxisSpacing),
+                            verticalArrangement = Arrangement.spacedBy(ButtonsCrossAxisSpacing),
                         ) {
                             dismissButton?.invoke()
                             confirmButton?.invoke()
@@ -217,7 +217,7 @@ fun SealDialogVariant(
     tonalElevation: Dp = AlertDialogDefaults.TonalElevation,
     properties: DialogProperties = DialogProperties()
 ) {
-    AlertDialog(
+    BasicAlertDialog(
         onDismissRequest = onDismissRequest,
         modifier = modifier,
         properties = properties

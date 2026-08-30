@@ -96,7 +96,6 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.junkfood.seal.App
 import com.junkfood.seal.Downloader
 import com.junkfood.seal.R
-import com.junkfood.seal.TrackDownload
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
@@ -136,7 +135,7 @@ fun DownloadPage(
     val clipboardManager = LocalClipboardManager.current
     val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
     val queueSummary by Downloader.queueSummary.collectAsStateWithLifecycle()
-    val queue by Downloader.queue.collectAsStateWithLifecycle()
+    val activeTitles by Downloader.activeTitles.collectAsStateWithLifecycle()
     val syncResult by Downloader.syncResult.collectAsStateWithLifecycle()
     val errorState by Downloader.errorState.collectAsStateWithLifecycle()
     val playlists by playlistViewModel.playlistsFlow.collectAsStateWithLifecycle()
@@ -393,9 +392,7 @@ fun DownloadPage(
                         summary = queueSummary,
                         phase = syncPhase,
                         deleted = deletedSoFar,
-                        activeTitles = queue.mapNotNull { track ->
-                            track.title.takeIf { track.status is TrackDownload.Status.Downloading }
-                        },
+                        activeTitles = activeTitles,
                         onCancel = {
                             view.slightHapticFeedback()
                             Downloader.cancelSync()
