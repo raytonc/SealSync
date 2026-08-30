@@ -30,7 +30,6 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -90,14 +89,16 @@ fun VideoListPage(
         viewModel.refreshFileList()
     }
 
-    val scrollBehavior = if (audioFiles.isNotEmpty()) {
-        TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
-            rememberTopAppBarState(),
-            canScroll = { true }
-        )
-    } else {
-        TopAppBarDefaults.pinnedScrollBehavior()
-    }
+    // One behaviour, built unconditionally, with the list's emptiness expressed through
+    // `canScroll` instead. Branching between two `TopAppBarDefaults.*ScrollBehavior` calls
+    // meant picking between two different sets of `rememberSaveable` slots depending on the
+    // data -- and this list is empty on entry and full a moment later, so that branch
+    // flipped on every visit and the app bar lost its scroll state when it did.
+    val topBarState = rememberTopAppBarState()
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
+        state = topBarState,
+        canScroll = { audioFiles.isNotEmpty() },
+    )
 
     val view = LocalView.current
     // Hoisted out of the row: SimpleDateFormat is comparatively expensive to construct,

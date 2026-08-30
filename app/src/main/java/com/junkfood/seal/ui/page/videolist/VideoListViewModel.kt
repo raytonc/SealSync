@@ -8,6 +8,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.junkfood.seal.App
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.AUDIO_EXTENSIONS
+import com.junkfood.seal.util.THUMBNAIL_EXTENSIONS
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,9 +25,6 @@ import java.io.File
 import javax.inject.Inject
 
 private const val TAG = "VideoListViewModel"
-
-/** Sidecar image files a download may have left alongside an audio file. */
-private val THUMBNAIL_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp")
 
 data class AudioFileInfo(
     val uri: Uri? = null,  // For DocumentFile (SAF) - primary method

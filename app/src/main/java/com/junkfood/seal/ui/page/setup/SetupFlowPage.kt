@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
@@ -46,7 +47,6 @@ import androidx.compose.ui.unit.dp
 import com.junkfood.seal.App
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.NOTIFICATION
-import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateString
@@ -74,10 +74,19 @@ fun SetupFlowPage(
     onSetupComplete: () -> Unit
 ) {
     val context = LocalContext.current
-    var currentStep by remember { mutableIntStateOf(0) }
-    var apiKey by remember { mutableStateOf("") }
-    var channelHandle by remember { mutableStateOf("") }
-    var folderSelected by remember { mutableStateOf(false) }
+    // Saveable, not merely remembered. Half these steps hand control to another app -- the
+    // SAF folder picker, the notification permission dialog, the battery-optimization
+    // settings screen -- any of which can take the process down with it on a tight device.
+    // Coming back to step 0 with the typed API key gone is the worst possible moment to
+    // restart a six-step first run.
+    var currentStep by rememberSaveable { mutableIntStateOf(0) }
+    var apiKey by rememberSaveable { mutableStateOf("") }
+    var channelHandle by rememberSaveable { mutableStateOf("") }
+    // Derived from what was actually persisted rather than from a flag set by the callback,
+    // so a folder chosen before a restart still counts as chosen afterwards.
+    var folderSelected by rememberSaveable {
+        mutableStateOf(AUDIO_DIRECTORY_URI.getString().isNotEmpty())
+    }
 
     // Notification permission (Android 13+)
     val notificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

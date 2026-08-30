@@ -26,10 +26,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.Downloading
 import androidx.compose.material.icons.outlined.LibraryMusic
@@ -91,7 +89,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
-import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.junkfood.seal.App
 import com.junkfood.seal.Downloader
@@ -445,7 +442,6 @@ fun DownloadPage(
                     onAddByUrl = { showAddPlaylistDialog = true },
                 )
             } else {
-                val syncingState = downloaderState as? Downloader.State.DownloadingPlaylist
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -479,7 +475,7 @@ fun DownloadPage(
                         ) {
                             PlaylistRow(
                                 playlist = playlist,
-                                syncState = playlist.syncStateFor(isSyncing = syncingState != null),
+                                syncState = playlist.syncStateFor(isSyncing = isSyncing),
                             )
                         }
                     }

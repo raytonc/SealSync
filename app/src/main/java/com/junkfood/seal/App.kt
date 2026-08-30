@@ -43,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 @HiltAndroidApp
 class App : Application(), ImageLoaderFactory {
@@ -130,7 +131,16 @@ class App : Application(), ImageLoaderFactory {
         lateinit var connectivityManager: ConnectivityManager
         lateinit var packageInfo: PackageInfo
 
-        private var isServiceRunning = false
+        /**
+         * Whether the service is currently bound.
+         *
+         * Atomic, and flipped with compare-and-set below, because the calls that read it
+         * are not confined to one thread: [Downloader] drives them from its state collector
+         * on the application scope while the UI can trigger a sync from the main thread. A
+         * plain `var` let two callers both observe `false` and each bind, which leaks a
+         * binding the single [stopService] can never undo.
+         */
+        private val isServiceRunning = AtomicBoolean(false)
         var downloadService: DownloadService? = null
             private set
 
@@ -146,8 +156,7 @@ class App : Application(), ImageLoaderFactory {
 
         /** Binds the download service so a sync survives the app being backgrounded. */
         fun startService() {
-            if (isServiceRunning) return
-            isServiceRunning = true
+            if (!isServiceRunning.compareAndSet(false, true)) return
             val appContext = context.applicationContext
             Intent(appContext, DownloadService::class.java).also { intent ->
                 // The service goes foreground in onCreate, so startForegroundService is safe here.
@@ -161,8 +170,7 @@ class App : Application(), ImageLoaderFactory {
         }
 
         fun stopService() {
-            if (!isServiceRunning) return
-            isServiceRunning = false
+            if (!isServiceRunning.compareAndSet(true, false)) return
             downloadService = null
             runCatching { context.applicationContext.unbindService(connection) }
                 .onFailure { it.printStackTrace() }

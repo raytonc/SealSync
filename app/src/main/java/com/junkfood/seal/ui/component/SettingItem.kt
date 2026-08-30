@@ -11,20 +11,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 
-@Composable
-fun SettingTitle(text: String) {
-    Text(
-        modifier = Modifier
-            .padding(top = 32.dp)
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        text = text,
-        style = MaterialTheme.typography.displaySmall
-    )
-}
-
 /**
- * Header for a group of related preferences. Smaller and tinted, unlike [SettingTitle]'s
- * display-sized page title, so a section reads as a label rather than a second heading.
+ * Header for a group of related preferences. Small and tinted, so a section reads as a
+ * label rather than a second heading competing with the app bar's title.
  */
 @Composable
 fun SettingSectionHeader(text: String, modifier: Modifier = Modifier) {

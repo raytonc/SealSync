@@ -16,7 +16,6 @@ import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.AudioFileData
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
-import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.NotificationUtil
 import com.junkfood.seal.util.PlaylistResult
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -179,6 +178,17 @@ object Downloader {
     private val mutableDownloaderState: MutableStateFlow<State> = MutableStateFlow(State.Idle)
 
     /**
+     * Why the last listing or folder scan gave up, set by the step that failed and read by
+     * the sync body to phrase its abort message.
+     *
+     * Out-params rather than richer return types because both helpers already use null as
+     * "no result", and only one sync runs at a time -- [isDownloaderAvailable] is what
+     * guarantees that, so there is no second run to interleave writes with.
+     */
+    private var failedPlaylists = 0
+    private var scanFailure: String? = null
+
+    /**
      * Every track in the current run, keyed by video id, in the order the run enumerated
      * them.
      *
@@ -192,17 +202,6 @@ object Downloader {
      * [MutableStateFlow] of an immutable map updated through [MutableStateFlow.update]
      * keeps those read-modify-writes atomic without a lock around the callback.
      */
-    /**
-     * Why the last listing or folder scan gave up, set by the step that failed and read by
-     * the sync body to phrase its abort message.
-     *
-     * Out-params rather than richer return types because both helpers already use null as
-     * "no result", and only one sync runs at a time -- [isDownloaderAvailable] is what
-     * guarantees that, so there is no second run to interleave writes with.
-     */
-    private var failedPlaylists = 0
-    private var scanFailure: String? = null
-
     private val mutableQueue = MutableStateFlow<Map<String, TrackDownload>>(emptyMap())
     private val mutableErrorState: MutableStateFlow<ErrorState> = MutableStateFlow(ErrorState.None)
     private val mutableSyncResult: MutableStateFlow<SyncResult?> = MutableStateFlow(null)
@@ -391,8 +390,6 @@ object Downloader {
 
             try {
                 val preferences = DownloadUtil.DownloadPreferences(
-                    extractAudio = true,
-                    embedThumbnail = true,
                     embedMetadata = true,
                     cropArtwork = true
                 )

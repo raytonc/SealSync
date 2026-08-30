@@ -153,11 +153,20 @@ android {
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // The static shortcut's <intent> has to name the package explicitly, and a
+            // literal in the XML is wrong for any variant whose applicationId is suffixed:
+            // a debug install's shortcut pointed at the release package and did nothing.
+            resValue("string", "shortcut_target_package", defaultConfig.applicationId!!)
         }
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             resValue("string", "app_name", "SealSync Debug")
+            resValue(
+                "string",
+                "shortcut_target_package",
+                "${defaultConfig.applicationId}$applicationIdSuffix"
+            )
         }
     }
 

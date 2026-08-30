@@ -8,7 +8,6 @@ import com.google.api.services.youtube.model.PlaylistItemListResponse
 import com.google.api.services.youtube.model.PlaylistListResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.URLDecoder
 
 object YouTubeApiService {
     private const val TAG = "YouTubeApiService"
@@ -50,17 +49,16 @@ object YouTubeApiService {
      * - https://m.youtube.com/playlist?list=PLxxxxx
      * - https://www.youtube.com/watch?v=xxxxx&list=PLxxxxx
      * - youtu.be links with list parameter
+     *
+     * Matched against the URL as given. It used to be percent-decoded first, which could
+     * only ever damage the match: a playlist id is drawn from `[a-zA-Z0-9_-]`, so it is
+     * never percent-encoded to begin with, while decoding turns a `+` elsewhere in the URL
+     * into a space and *throws outright* on a stray `%`. The catch that wrapped it then
+     * reported that as a null id, which the caller shows as "Invalid YouTube playlist URL"
+     * -- for a link that was perfectly valid.
      */
-    fun extractPlaylistId(url: String): String? {
-        return try {
-            val decodedUrl = URLDecoder.decode(url, "UTF-8")
-
-            PLAYLIST_ID_PATTERN.find(decodedUrl)?.groupValues?.get(1)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error extracting playlist ID", e)
-            null
-        }
-    }
+    fun extractPlaylistId(url: String): String? =
+        PLAYLIST_ID_PATTERN.find(url)?.groupValues?.get(1)
 
     /**
      * Fetches playlist metadata from YouTube Data API v3

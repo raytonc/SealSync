@@ -65,9 +65,16 @@ object DownloadUtil {
      */
     private fun watchUrlFor(videoId: String) = "https://www.youtube.com/watch?v=$videoId"
 
+    /**
+     * The knobs a download actually reads.
+     *
+     * `extractAudio` and `embedThumbnail` used to sit here too. Neither was ever consulted:
+     * audio extraction is unconditional (SealSync has no other mode), and the thumbnail is
+     * embedded under [embedMetadata] along with the rest of the tags. They were set to
+     * `true` at the single call site and read nowhere, which made them look like switches
+     * that did something.
+     */
     data class DownloadPreferences(
-        val extractAudio: Boolean = true,
-        val embedThumbnail: Boolean = false,
         val embedMetadata: Boolean = true,
         val cropArtwork: Boolean = false,
     )

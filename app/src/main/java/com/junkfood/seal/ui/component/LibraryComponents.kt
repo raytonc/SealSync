@@ -84,20 +84,23 @@ fun LibraryHeader(
     }
 }
 
-/** Per-playlist sync state, shown as a small chip on each row. */
-enum class PlaylistSyncState { Synced, Syncing, Pending, NeverSynced }
+/**
+ * Per-playlist sync state, shown as a small chip on each row.
+ *
+ * There is deliberately no "pending" case. A sync is one pass over the whole library rather
+ * than a per-playlist queue, so during a run every row is equally in flight -- nothing is
+ * ever waiting its turn, and a state nothing can produce is just a branch that never runs.
+ */
+enum class PlaylistSyncState { Synced, Syncing, NeverSynced }
 
 @Composable
 fun PlaylistRow(
     modifier: Modifier = Modifier,
     playlist: PlaylistEntry,
     syncState: PlaylistSyncState,
-    onClick: () -> Unit = {},
 ) {
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
@@ -174,9 +177,6 @@ private fun SyncStateChip(state: PlaylistSyncState, lastSynced: Long) {
 
         PlaylistSyncState.Synced ->
             "Synced ${formatRelativeTime(lastSynced)}" to MaterialTheme.colorScheme.primary
-
-        PlaylistSyncState.Pending ->
-            "Waiting to sync" to MaterialTheme.colorScheme.tertiary
 
         PlaylistSyncState.NeverSynced ->
             "Never synced" to MaterialTheme.colorScheme.outline

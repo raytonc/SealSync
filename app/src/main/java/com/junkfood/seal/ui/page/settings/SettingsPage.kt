@@ -3,16 +3,10 @@ package com.junkfood.seal.ui.page.settings
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.PowerManager
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.EnergySavingsLeaf
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
@@ -49,7 +42,6 @@ import com.junkfood.seal.R
 import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.PreferenceItem
-import com.junkfood.seal.ui.component.PreferencesHintCard
 import com.junkfood.seal.ui.component.SmallTopAppBar
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -82,11 +74,18 @@ fun SettingsPage(
 
     val uriHandler = LocalUriHandler.current
 
-    // --- replicate a subset of GeneralDownloadPreferences state so we can render general settings inline
     val scope = rememberCoroutineScope()
     var isUpdating by remember { mutableStateOf(false) }
-    var ytdlpVersion = YoutubeDL.getInstance().version(context.applicationContext)
-        ?: context.getString(R.string.ytdlp_update)
+    // Remembered state, not a plain local: reading the version goes through the yt-dlp
+    // wrapper to disk, so an unremembered `var` paid for that on every recomposition --
+    // and, worse, the assignment after an update was discarded by the next one, so the row
+    // kept showing the version the screen opened with.
+    var ytdlpVersion by remember {
+        mutableStateOf(
+            YoutubeDL.getInstance().version(context.applicationContext)
+                ?: context.getString(R.string.ytdlp_update)
+        )
+    }
     var audioDirectoryText by remember { mutableStateOf(App.audioDownloadDir) }
 
     var showApiKeyDialog by remember { mutableStateOf(false) }

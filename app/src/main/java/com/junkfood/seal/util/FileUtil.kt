@@ -28,8 +28,14 @@ private const val TAG = "FileUtil"
 val AUDIO_EXTENSIONS =
     setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
 
-/** Sidecar files written by the download's thumbnail/metadata options. */
-private val THUMBNAIL_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp")
+/**
+ * Sidecar image files written by the download's thumbnail options.
+ *
+ * Shared for the same reason [AUDIO_EXTENSIONS] is: the download's own file collection and
+ * the library's delete path both have to agree on what counts as a sidecar, and a second
+ * private copy is how they drift apart.
+ */
+val THUMBNAIL_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp")
 
 data class AudioFileData(
     val uri: Uri,
@@ -203,11 +209,6 @@ object FileUtil {
     }
 
     fun Context.getFileProvider() = "$packageName.provider"
-
-    fun deleteFile(path: String) =
-        path.runCatching {
-            if (!File(path).delete()) DocumentFile.fromSingleUri(context, Uri.parse(this))?.delete()
-        }
 
     /**
      * Registers a finished download with the system media library and returns the media

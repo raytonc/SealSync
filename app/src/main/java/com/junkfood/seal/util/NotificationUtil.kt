@@ -134,7 +134,17 @@ object NotificationUtil {
         error: String? = null,
     ) {
         // Removing a foreground notification requires stopForeground; cancel() alone won't do it.
-        App.downloadService?.stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        // The int overload and STOP_FOREGROUND_REMOVE are both API 24, and this module still
+        // supports 21, so the older boolean form is what those builds get -- `true` there
+        // means exactly what STOP_FOREGROUND_REMOVE means here.
+        App.downloadService?.let { service ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                service.stopForeground(true)
+            }
+        }
         notificationManager.cancel(SERVICE_NOTIFICATION_ID)
 
         if (!PreferenceUtil.getValue(NOTIFICATION)) return

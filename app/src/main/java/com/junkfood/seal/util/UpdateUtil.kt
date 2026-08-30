@@ -67,19 +67,25 @@ object UpdateUtil {
         }
 
 
+    /**
+     * The newest release on the configured channel.
+     *
+     * The response is closed with `use`, so a malformed body or a version that fails to
+     * parse releases the connection on the way out. Previously the close sat after the
+     * decode and the "no releases" throw, both of which skipped it -- every failed update
+     * check leaked its connection back to the pool held open.
+     */
     private suspend fun getLatestRelease(): LatestRelease =
-        client.newCall(requestForReleases).execute().run {
+        client.newCall(requestForReleases).execute().use { response ->
             val releaseList =
-                jsonFormat.decodeFromString<List<LatestRelease>>(this.body.string())
-            val latestRelease =
-                releaseList.filter { if (UPDATE_CHANNEL.getInt() == STABLE) it.name.toVersion() is Version.Stable else true }
-                    .maxByOrNull { it.name.toVersion() }
-                    ?: throw Exception("null response")
-            releaseList.sortedBy { it.name.toVersion() }.forEach {
-                Log.d(TAG, it.tagName.toString())
-            }
-            body.close()
-            latestRelease
+                jsonFormat.decodeFromString<List<LatestRelease>>(response.body.string())
+            releaseList
+                .filter {
+                    if (UPDATE_CHANNEL.getInt() == STABLE) it.name.toVersion() is Version.Stable
+                    else true
+                }
+                .maxByOrNull { it.name.toVersion() }
+                ?: throw Exception("no releases on the selected channel")
         }
 
 
@@ -154,14 +160,17 @@ object UpdateUtil {
         val abiList = Build.SUPPORTED_ABIS
         val preferredArch = abiList.firstOrNull() ?: return@withContext emptyFlow()
 
-        val targetUrl = latestRelease.assets?.find {
-            return@find it.name?.contains(preferredArch) ?: false
-        }?.browserDownloadUrl ?: return@withContext emptyFlow()
+        val targetUrl = latestRelease.assets
+            ?.find { it.name?.contains(preferredArch) == true }
+            ?.browserDownloadUrl
+            ?: return@withContext emptyFlow()
+
         val request = Request.Builder().url(targetUrl).build()
         try {
-            val response = client.newCall(request).execute()
-            val responseBody = response.body
-            return@withContext responseBody.downloadFileWithProgress(context.getLatestApk())
+            // The body is deliberately not closed here: downloadFileWithProgress streams it
+            // and closes it through `use` once the flow is collected.
+            return@withContext client.newCall(request).execute().body
+                .downloadFileWithProgress(context.getLatestApk())
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -177,7 +186,14 @@ object UpdateUtil {
         try {
             byteStream().use { inputStream ->
                 saveFile.outputStream().use { outputStream ->
-                    val totalBytes = contentLength()
+                    // -1 when the response is chunked and carries no Content-Length. That
+                    // is a legitimate response, but it used to poison everything below:
+                    // the percentage went negative, and the size check then read
+                    // `progressBytes > -1` as "too many bytes" and deleted a download that
+                    // had in fact completed. With no declared length there is simply
+                    // nothing to verify against, so report indeterminate progress and
+                    // accept whatever arrived.
+                    val totalBytes = contentLength().takeIf { it > 0 }
                     val data = ByteArray(8_192)
                     var progressBytes = 0L
 
@@ -190,10 +206,17 @@ object UpdateUtil {
 
                         outputStream.write(data, 0, bytes)
                         progressBytes += bytes
-                        emit(DownloadStatus.Progress(percent = ((progressBytes * 100) / totalBytes).toInt()))
+                        if (totalBytes != null) {
+                            emit(
+                                DownloadStatus.Progress(
+                                    percent = ((progressBytes * 100) / totalBytes).toInt()
+                                )
+                            )
+                        }
                     }
 
                     when {
+                        totalBytes == null -> deleteFile = progressBytes == 0L
                         progressBytes < totalBytes -> throw Exception("missing bytes")
                         progressBytes > totalBytes -> throw Exception("too many bytes")
                         else -> deleteFile = false

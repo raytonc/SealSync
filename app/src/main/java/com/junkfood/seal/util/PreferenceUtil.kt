@@ -90,8 +90,6 @@ object PreferenceUtil {
 
     fun String.updateString(newString: String) = kv.encode(this, newString)
 
-    fun String.updateInt(newInt: Int) = kv.encode(this, newInt)
-
     fun String.updateLong(newLong: Long) = kv.encode(this, newLong)
 
     fun String.updateBoolean(newValue: Boolean) = kv.encode(this, newValue)

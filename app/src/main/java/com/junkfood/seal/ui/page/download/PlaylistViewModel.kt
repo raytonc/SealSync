@@ -112,36 +112,6 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
         }
     }
 
-    fun refreshPlaylistMetadata(playlist: PlaylistEntry) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val apiKey = YOUTUBE_API_KEY.getString()
-                if (apiKey.isBlank()) return@launch
-
-                val playlistId = playlist.playlistId
-                    ?: YouTubeApiService.extractPlaylistId(playlist.url)
-                    ?: return@launch
-
-                val info = YouTubeApiService.getPlaylistInfo(playlistId, apiKey)
-                    ?: return@launch
-
-                val updated = playlist.copy(
-                    title = info.title,
-                    thumbnailUrl = info.thumbnailUrl,
-                    videoCount = info.videoCount,
-                    channelTitle = info.channelTitle,
-                    description = info.description,
-                    lastSynced = System.currentTimeMillis(),
-                    playlistId = playlistId
-                )
-
-                DatabaseUtil.updatePlaylist(updated)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
     fun deletePlaylist(playlist: PlaylistEntry) {
         viewModelScope.launch(Dispatchers.IO) {
             DatabaseUtil.deletePlaylist(playlist)

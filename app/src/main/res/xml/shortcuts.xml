@@ -9,6 +9,6 @@
         <intent
             android:action="android.intent.action.VIEW"
             android:targetClass="com.junkfood.seal.ui.shortcut.SyncShortcutActivity"
-            android:targetPackage="com.junkfood.seal" />
+            android:targetPackage="@string/shortcut_target_package" />
     </shortcut>
 </shortcuts>

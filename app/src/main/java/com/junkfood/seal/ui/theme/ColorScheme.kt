@@ -72,4 +72,3 @@ fun Int.generateLabelColor(): Color =
             tone = 80.0
         ).toInt()
     ).harmonizeWithPrimary()
-

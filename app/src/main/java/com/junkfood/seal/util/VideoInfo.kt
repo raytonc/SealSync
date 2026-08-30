@@ -24,13 +24,18 @@ sealed interface YoutubeDLInfo
 data class VideoInfo(
     val id: String = "",
     val title: String = "",
-    @SerialName("_type") val type: String? = null,
 ) : YoutubeDLInfo
 
-/** A playlist and its flat listing of entries. */
+/**
+ * A playlist and its flat listing of entries.
+ *
+ * [type] is the discriminator: yt-dlp reports `"playlist"` here, and a response that says
+ * anything else is re-decoded as a [VideoInfo]. The playlist's own title is deliberately
+ * not kept -- the sync reads playlist names from the database, which the YouTube API keeps
+ * current, and never from the listing.
+ */
 @Serializable
 data class PlaylistResult(
-    val title: String? = null,
     @SerialName("_type") val type: String? = null,
     val entries: List<Entries>? = emptyList(),
 ) : YoutubeDLInfo
