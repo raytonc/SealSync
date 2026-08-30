@@ -6,6 +6,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.util.Log
 import androidx.annotation.CheckResult
 import androidx.core.content.FileProvider
@@ -34,8 +35,11 @@ data class AudioFileData(
 /**
  * Recursively lists audio files under a SAF tree URI. Used instead of the File API so
  * the app keeps working under scoped storage without broad storage permissions.
- */
-/**
+ *
+ * Queries each directory's children cursor directly rather than walking [DocumentFile],
+ * whose per-property getters each cost a separate IPC round-trip to the provider. This
+ * costs one query per directory instead of five per file.
+ *
  * Throws rather than returning a short list when the tree cannot be read.
  *
  * A sync treats "no local files" as "everything is missing", so a partial or empty result
@@ -43,38 +47,67 @@ data class AudioFileData(
  * the two cases wrap this in runCatching and abort the run.
  */
 fun scanAudioFilesWithDocumentFile(context: Context, treeUri: Uri): List<AudioFileData> {
-    val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
-        ?: throw IllegalStateException("could not open tree URI $treeUri")
+    val rootId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }
+        .getOrNull() ?: throw IllegalStateException("could not open tree URI $treeUri")
 
     val files = mutableListOf<AudioFileData>()
+    // Iterative to keep a deeply nested tree from overflowing the stack. The visited set
+    // guards against a provider reporting a cycle.
+    val pending = ArrayDeque<String>().apply { add(rootId) }
+    val visited = mutableSetOf(rootId)
 
-    fun scanRecursively(doc: DocumentFile) {
+    val projection = arrayOf(
+        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+        DocumentsContract.Document.COLUMN_MIME_TYPE,
+        DocumentsContract.Document.COLUMN_SIZE,
+        DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+    )
+
+    while (pending.isNotEmpty()) {
+        val parentId = pending.removeFirst()
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId)
+
+        // One query per directory returns every column below, so no per-file IPC is needed.
         // No runCatching here: a directory that cannot be listed must fail the whole scan
         // rather than silently contributing nothing.
-        doc.listFiles().forEach { file ->
-            if (file.isDirectory) {
-                scanRecursively(file)
-                return@forEach
-            }
-            if (!file.isFile) return@forEach
+        val cursor = context.contentResolver.query(childrenUri, projection, null, null, null)
+            ?: throw IllegalStateException("could not list children of $parentId under $treeUri")
 
-            val name = file.name ?: return@forEach
-            // Files the user deleted are kept around by the system with this prefix.
-            if (name.startsWith(".trashed-")) return@forEach
-            if (name.substringAfterLast('.', "").lowercase() !in AUDIO_EXTENSIONS) return@forEach
+        cursor.use {
+            val idColumn = it.getColumnIndexOrThrow(projection[0])
+            val nameColumn = it.getColumnIndexOrThrow(projection[1])
+            val mimeColumn = it.getColumnIndexOrThrow(projection[2])
+            val sizeColumn = it.getColumnIndexOrThrow(projection[3])
+            val modifiedColumn = it.getColumnIndexOrThrow(projection[4])
 
-            files.add(
-                AudioFileData(
-                    uri = file.uri,
-                    name = name,
-                    size = file.length(),
-                    lastModified = file.lastModified()
+            while (it.moveToNext()) {
+                val documentId = it.getString(idColumn) ?: continue
+
+                if (it.getString(mimeColumn) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    if (visited.add(documentId)) pending.add(documentId)
+                    continue
+                }
+
+                val name = it.getString(nameColumn) ?: continue
+                // Files the user deleted are kept around by the system with this prefix.
+                if (name.startsWith(".trashed-")) continue
+                if (name.substringAfterLast('.', "").lowercase() !in AUDIO_EXTENSIONS) continue
+
+                files.add(
+                    AudioFileData(
+                        uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
+                        name = name,
+                        // Providers may leave either column null; both are advisory here.
+                        size = if (it.isNull(sizeColumn)) 0L else it.getLong(sizeColumn),
+                        lastModified =
+                            if (it.isNull(modifiedColumn)) 0L else it.getLong(modifiedColumn)
+                    )
                 )
-            )
+            }
         }
     }
 
-    scanRecursively(rootDoc)
     Log.d(TAG, "scanAudioFiles: found ${files.size} audio files under $treeUri")
     return files
 }
