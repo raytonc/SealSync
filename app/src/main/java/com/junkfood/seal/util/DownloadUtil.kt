@@ -5,12 +5,10 @@ import android.util.Log
 import androidx.annotation.CheckResult
 import com.junkfood.seal.App.Companion.audioDownloadDir
 import com.junkfood.seal.App.Companion.context
-import com.junkfood.seal.R
 import com.junkfood.seal.util.FileUtil.getConfigFile
 import com.junkfood.seal.util.FileUtil.getExternalTempDir
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
-import com.yausername.youtubedl_android.YoutubeDLResponse
 import kotlinx.serialization.json.Json
 
 /**
@@ -22,6 +20,9 @@ import kotlinx.serialization.json.Json
 object DownloadUtil {
 
     private val jsonFormat = Json { ignoreUnknownKeys = true }
+
+    /** Makes each concurrent playlist listing's process id unique. */
+    private val listingCounter = java.util.concurrent.atomic.AtomicLong()
 
     private const val TAG = "DownloadUtil"
 
@@ -39,8 +40,30 @@ object DownloadUtil {
     private const val CROP_ARTWORK_COMMAND =
         """--ppa "ffmpeg: -c:v mjpeg -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\"""""
 
-    /** Number of fragments yt-dlp downloads in parallel per video. */
+    /**
+     * Number of fragments yt-dlp downloads in parallel *within* one video.
+     *
+     * Multiplies with the number of videos the sync runs at once, so the real connection
+     * count is this times `Downloader.MAX_CONCURRENT_DOWNLOADS`. Both are kept modest for
+     * that reason.
+     */
     private const val CONCURRENT_FRAGMENTS = 8
+
+    /**
+     * Only the audio stream is ever kept, so ask for an audio-only format up front.
+     * Without this yt-dlp picks the "best" format overall, which on YouTube means pulling
+     * the full 1080p+ video track and handing it to ffmpeg purely to be thrown away --
+     * several times the bytes and the CPU for an identical result. `bestaudio/best` keeps
+     * the fallback for the rare extractor that exposes no audio-only stream.
+     */
+    private const val AUDIO_FORMAT = "bestaudio/best"
+
+    /**
+     * Playlist entries carry the video id, and a watch URL built from it resolves straight
+     * to the video. Addressing the playlist with `--playlist-items` instead makes yt-dlp
+     * re-resolve the whole playlist page for every single item.
+     */
+    private fun watchUrlFor(videoId: String) = "https://www.youtube.com/watch?v=$videoId"
 
     data class DownloadPreferences(
         val extractAudio: Boolean = true,
@@ -54,54 +77,30 @@ object DownloadUtil {
      * and a [VideoInfo] when the URL turns out to be a single video.
      */
     @CheckResult
-    fun getPlaylistOrVideoInfo(
-        playlistURL: String,
-        downloadPreferences: DownloadPreferences = DownloadPreferences()
-    ): Result<YoutubeDLInfo> = YoutubeDL.runCatching {
-        ToastUtil.showToast(context.getString(R.string.fetching_playlist_info))
-        val request = YoutubeDLRequest(playlistURL).apply {
-            addOption("--flat-playlist")
-            addOption("--dump-single-json")
-            addOption("-o", BASENAME)
-            addOption("-R", "1")
-            addOption("--socket-timeout", "5")
-            if (downloadPreferences.extractAudio) addOption("-x")
-        }
-        execute(request, playlistURL).out.run {
-            val playlistInfo = jsonFormat.decodeFromString<PlaylistResult>(this)
-            if (playlistInfo.type != "playlist") jsonFormat.decodeFromString<VideoInfo>(this)
-            else playlistInfo
-        }
-    }
-
-    /**
-     * Resolves full info for one video. [playlistItem] selects a single 1-based entry of
-     * a playlist URL; pass 0 to treat [url] as pointing at the video itself.
-     */
-    @CheckResult
-    fun fetchVideoInfoFromUrl(
-        url: String,
-        playlistItem: Int = 0,
-        preferences: DownloadPreferences = DownloadPreferences()
-    ): Result<VideoInfo> {
-        val request = YoutubeDLRequest(url).apply {
-            addOption("-o", BASENAME)
-            if (preferences.extractAudio) addOption("-x")
-            if (playlistItem != 0) {
-                addOption("--playlist-items", playlistItem)
-                addOption("--dump-json")
-            } else {
+    fun getPlaylistOrVideoInfo(playlistURL: String): Result<YoutubeDLInfo> =
+        YoutubeDL.runCatching {
+            // Deliberately no toast here. A sync lists every playlist at once, so announcing
+            // it per call stacked one identical "fetching playlist info" toast per saved
+            // playlist -- the same sentence, several times, for a single step of one run.
+            // The sync card says it once instead, for as long as the step actually takes.
+            // A flat listing resolves no formats and writes no files, so the extraction and
+            // output-template options a download needs only cost startup work here.
+            val request = YoutubeDLRequest(playlistURL).apply {
+                addOption("--flat-playlist")
                 addOption("--dump-single-json")
+                addOption("-R", "1")
+                addOption("--socket-timeout", "5")
             }
-            addOption("-R", "1")
-            addOption("--no-playlist")
-            addOption("--socket-timeout", "5")
+            // The process id must be unique across concurrent launches: the wrapper keeps a
+            // map keyed by it and throws on a duplicate, and nothing saves a playlist URL
+            // only once, so two rows with the same URL would otherwise fail the sync.
+            val processId = "listing:$playlistURL:${listingCounter.getAndIncrement()}"
+            execute(request, processId).out.run {
+                val playlistInfo = jsonFormat.decodeFromString<PlaylistResult>(this)
+                if (playlistInfo.type != "playlist") jsonFormat.decodeFromString<VideoInfo>(this)
+                else playlistInfo
+            }
         }
-        return request.runCatching {
-            val response: YoutubeDLResponse = YoutubeDL.getInstance().execute(request, null, null)
-            jsonFormat.decodeFromString<VideoInfo>(response.out)
-        }
-    }
 
     private fun YoutubeDLRequest.addOptionsForAudioDownloads(
         id: String,
@@ -134,22 +133,36 @@ object DownloadUtil {
         addOption("--parse-metadata", "%(album,title)s:%(meta_album)s")
     }
 
-    /** Downloads one video's audio into the configured folder. */
+    /**
+     * Downloads one video's audio into the configured folder, addressed by [videoId].
+     *
+     * A sync used to resolve full [VideoInfo] for the video first and pass it here purely
+     * to read the URL back off it. That doubled the number of yt-dlp launches -- each one
+     * pays for a fresh Python interpreter and a full yt-dlp import before it touches the
+     * network -- and made the extractor run twice per video for information the download
+     * re-derives anyway. The id is all that is needed, and the sync already has it.
+     *
+     * Safe to call concurrently, and the sync does: every launch is its own OS process
+     * with its own buffers, and the two pieces of state that are not per-process are
+     * already keyed apart. [taskId] indexes the wrapper's process map, which rejects a
+     * duplicate outright, so callers must keep it unique per in-flight download; and the
+     * `--config` file the crop option writes is named after [videoId], so two items never
+     * write the same path. This call blocks the calling thread until the process exits,
+     * so it belongs on [kotlinx.coroutines.Dispatchers.IO].
+     */
     @CheckResult
-    fun downloadVideo(
-        videoInfo: VideoInfo,
+    fun downloadVideoById(
+        videoId: String,
         taskId: String,
         downloadPreferences: DownloadPreferences,
         progressCallback: ((Float, Long, String) -> Unit)?
     ): Result<List<String>> {
-        val url = videoInfo.originalUrl ?: videoInfo.webpageUrl
-        ?: return Result.failure(Throwable(context.getString(R.string.fetch_info_error_msg)))
-
-        val request = YoutubeDLRequest(url).apply {
+        val request = YoutubeDLRequest(watchUrlFor(videoId)).apply {
             addOption("--no-mtime")
             addOption("--no-playlist")
+            addOption("-f", AUDIO_FORMAT)
             addOption("--concurrent-fragments", CONCURRENT_FRAGMENTS)
-            addOptionsForAudioDownloads(id = videoInfo.id, preferences = downloadPreferences)
+            addOptionsForAudioDownloads(id = videoId, preferences = downloadPreferences)
             addOption("-P", audioDownloadDir)
             if (Build.VERSION.SDK_INT > 23) addOption("-P", "temp:" + getExternalTempDir())
             addOption("-o", OUTPUT_TEMPLATE_ID)
@@ -163,12 +176,10 @@ object DownloadUtil {
             )
         }.onFailure { return Result.failure(it) }
 
-        Log.d(TAG, "downloadVideo: finished ${videoInfo.id} (${videoInfo.title})")
+        Log.d(TAG, "downloadVideoById: finished $videoId")
 
         return Result.success(
-            FileUtil.scanFileToMediaLibraryPostDownload(
-                videoId = videoInfo.id, downloadDir = audioDownloadDir
-            )
+            FileUtil.collectDownloadedFiles(videoId = videoId, downloadDir = audioDownloadDir)
         )
     }
 }

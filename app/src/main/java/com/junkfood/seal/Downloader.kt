@@ -25,13 +25,24 @@ import com.junkfood.seal.util.YOUTUBE_API_KEY
 import com.junkfood.seal.util.YouTubeApiService
 import com.junkfood.seal.util.scanAudioFilesWithDocumentFile
 import com.yausername.youtubedl_android.YoutubeDL
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Singleton state holder that runs playlist syncs. Owned by the UI and by
@@ -46,6 +57,24 @@ object Downloader {
         setOf("mp3", "m4a", "aac", "opus", "ogg", "oga", "webm", "flac", "wav")
 
     /**
+     * How many videos download at once.
+     *
+     * A sync used to run strictly one at a time, which left the device idle for most of
+     * the run: each item spends its first seconds in extractor round trips and its last
+     * in an ffmpeg transcode, and neither saturates a phone's network or its cores alone.
+     * Overlapping them hides one item's latency behind another's transfer.
+     *
+     * Kept deliberately small rather than unbounded. Every concurrent item is a separate
+     * Python process that imports yt-dlp (tens of MB resident) and then forks ffmpeg, so
+     * the ceiling here is memory and the background-process limits Android enforces on a
+     * foreground service, not bandwidth -- and yt-dlp already fans out
+     * [DownloadUtil.CONCURRENT_FRAGMENTS] connections per item on top of this. Three is
+     * enough to keep the pipe busy through the serial phases without risking the
+     * low-memory killer mid-sync.
+     */
+    private const val MAX_CONCURRENT_DOWNLOADS = 3
+
+    /**
      * Matches the `[videoId]` yt-dlp appends via the output template, which always sits
      * immediately before the extension. Anchored to the end rather than matching the
      * first bracket group: titles routinely carry their own tags (`[Official Video]`,
@@ -54,10 +83,43 @@ object Downloader {
      */
     private val VIDEO_ID_PATTERN = Regex("\\[([a-zA-Z0-9_-]{6,50})]\\.[^.]+$")
 
+    /**
+     * Which step of the sync is running, for the card on the home screen.
+     *
+     * A sync is not only downloads. It lists every playlist, scans the folder, deletes what
+     * no longer belongs, and only then downloads -- and the first three take real time on a
+     * large library. The card used to have no way to say so: with nothing queued yet its
+     * item count was zero, so every one of those steps rendered as the same "Preparing"
+     * placeholder, and a run that spent a minute deleting files looked stalled.
+     */
+    enum class Phase {
+        /** Listing every playlist's videos. One line, however many playlists there are. */
+        Fetching,
+
+        /** Reading the destination folder to see what is already there. */
+        Scanning,
+
+        /** Removing local files that no longer belong to any playlist. */
+        Deleting,
+
+        /** Downloading what is missing. The only phase with a per-item queue behind it. */
+        Downloading,
+    }
+
     sealed class State {
+        /**
+         * [currentItem] counts items that have *finished* (successfully or not) plus those
+         * in flight, so the "n of m" it drives still advances monotonically now that
+         * several items download at once. [itemCount] is the total the run set out to do.
+         *
+         * [phase] is which step is running and [deleted] how many files have been removed
+         * so far, both so the card can describe the run before any download starts.
+         */
         data class DownloadingPlaylist(
             val currentItem: Int = 0,
             val itemCount: Int = 0,
+            val phase: Phase = Phase.Fetching,
+            val deleted: Int = 0,
         ) : State()
 
         data object Idle : State()
@@ -88,10 +150,49 @@ object Downloader {
      * Outcome of the last completed sync, for the summary card on the home screen. Null
      * until a run finishes, and cleared once the card is dismissed.
      */
-    data class SyncResult(val downloaded: Int, val deleted: Int, val cancelled: Boolean = false)
+    data class SyncResult(
+        val downloaded: Int,
+        val deleted: Int,
+        val cancelled: Boolean = false,
+        /** Downloads that were attempted and threw. */
+        val failed: Int = 0,
+        /**
+         * Set when the run stopped before it could compare anything -- a playlist that
+         * would not list, an unreadable folder. Nothing was downloaded and nothing was
+         * deleted, but that is emphatically not the same as being up to date, and the
+         * card said exactly the wrong thing when it could not tell the two apart.
+         */
+        val error: String? = null,
+    )
 
     private val mutableDownloaderState: MutableStateFlow<State> = MutableStateFlow(State.Idle)
-    private val mutableTaskState = MutableStateFlow(DownloadTaskItem())
+
+    /**
+     * Every track in the current run, keyed by video id, in the order the run enumerated
+     * them.
+     *
+     * Seeded whole and up front rather than grown as items start: several download at
+     * once, so "what is happening" is a set, and the queue screen wants the items still
+     * waiting as much as the ones in flight. Entries move through their statuses in place
+     * and are never removed mid-run, so a finished or failed track stays on screen as the
+     * record of what the run did -- the next sync is what clears it.
+     *
+     * Updates arrive from every download's progress callback on its own thread; a
+     * [MutableStateFlow] of an immutable map updated through [MutableStateFlow.update]
+     * keeps those read-modify-writes atomic without a lock around the callback.
+     */
+    /**
+     * Why the last listing or folder scan gave up, set by the step that failed and read by
+     * the sync body to phrase its abort message.
+     *
+     * Out-params rather than richer return types because both helpers already use null as
+     * "no result", and only one sync runs at a time -- [isDownloaderAvailable] is what
+     * guarantees that, so there is no second run to interleave writes with.
+     */
+    private var failedPlaylists = 0
+    private var scanFailure: String? = null
+
+    private val mutableQueue = MutableStateFlow<Map<String, TrackDownload>>(emptyMap())
     private val mutableErrorState: MutableStateFlow<ErrorState> = MutableStateFlow(ErrorState.None)
     private val mutableSyncResult: MutableStateFlow<SyncResult?> = MutableStateFlow(null)
 
@@ -99,25 +200,84 @@ object Downloader {
     val errorState = mutableErrorState.asStateFlow()
     val syncResult = mutableSyncResult.asStateFlow()
 
+    /** The run's tracks in enumeration order, for the queue screen. */
+    val queue: StateFlow<List<TrackDownload>> = mutableQueue
+        .map { it.values.toList() }
+        .stateIn(applicationScope, SharingStarted.Eagerly, emptyList())
+
+    /** Tallies over [queue], for the queue header and the home card. */
+    val queueSummary: StateFlow<QueueSummary> = mutableQueue
+        .map { it.values.toSummary() }
+        .stateIn(applicationScope, SharingStarted.Eagerly, QueueSummary())
+
+    private fun Collection<TrackDownload>.toSummary(): QueueSummary {
+        if (isEmpty()) return QueueSummary()
+        var done = 0
+        var failed = 0
+        var skipped = 0
+        var downloading = 0
+        var queued = 0
+        // Finished items count as a whole unit and running ones as their own fraction, so
+        // the overall bar advances continuously instead of stepping once per track.
+        var completedUnits = 0.0
+        forEach { track ->
+            when (val status = track.status) {
+                is TrackDownload.Status.Queued -> queued++
+                is TrackDownload.Status.Downloading -> {
+                    downloading++
+                    completedUnits += (status.progress / 100f).coerceIn(0f, 1f)
+                }
+
+                is TrackDownload.Status.Done -> {
+                    done++
+                    completedUnits += 1
+                }
+
+                is TrackDownload.Status.Failed -> {
+                    failed++
+                    completedUnits += 1
+                }
+
+                // Settled, not pending: a cancelled run should reach the end of the bar
+                // rather than sitting short of it forever.
+                is TrackDownload.Status.Skipped -> {
+                    skipped++
+                    completedUnits += 1
+                }
+            }
+        }
+        return QueueSummary(
+            total = size,
+            done = done,
+            failed = failed,
+            skipped = skipped,
+            downloading = downloading,
+            queued = queued,
+            progress = (completedUnits / size).toFloat(),
+        )
+    }
+
     /** Dismisses the sync summary card. */
     fun clearSyncResult() {
         mutableSyncResult.update { null }
     }
 
     /**
-     * Stops an in-flight sync. The download loop checks the state before each item and
-     * between the fetch and download steps, so flipping off [State.DownloadingPlaylist]
-     * unwinds it at the next checkpoint and the `finally` block reports what it managed
-     * to finish. The already-downloaded files are kept.
+     * Stops an in-flight sync. Every queued item checks the state once it takes its
+     * download slot, so flipping off [State.DownloadingPlaylist] drains the queue without
+     * starting anything new, and the `finally` block reports what the run managed to
+     * finish. The already-downloaded files are kept.
+     *
+     * The handful of items already downloading run to completion -- their yt-dlp
+     * processes are not killed -- so the sync ends once the last of them lands rather
+     * than instantly. This is the same behaviour as before downloads ran in parallel,
+     * only now it can be up to [MAX_CONCURRENT_DOWNLOADS] items instead of one.
      */
     fun cancelSync() {
         if (mutableDownloaderState.value is State.DownloadingPlaylist) {
             updateState(State.Idle)
         }
     }
-
-    /** Progress of the video currently downloading, for the sync UI. */
-    val taskState = mutableTaskState.asStateFlow()
 
     init {
         // Keep the foreground service bound exactly while something is running.
@@ -137,6 +297,21 @@ object Downloader {
     }
 
     fun updateState(state: State) = mutableDownloaderState.update { state }
+
+    /**
+     * Moves the run to its next step, if it is still running, and says so on the ongoing
+     * notification as well -- it is the only view of the sync once the app is backgrounded.
+     */
+    private fun updatePhase(phase: Phase) {
+        var moved = false
+        mutableDownloaderState.update {
+            if (it is State.DownloadingPlaylist) {
+                moved = true
+                it.copy(phase = phase)
+            } else it
+        }
+        if (moved) NotificationUtil.updateServiceNotificationForPhase(phase)
+    }
 
     private fun clearErrorState() {
         mutableErrorState.update { ErrorState.None }
@@ -163,18 +338,28 @@ object Downloader {
         // Drop the previous run's error and summary now that a new one is starting.
         clearErrorState()
         clearSyncResult()
-        mutableTaskState.update { DownloadTaskItem() }
+        // The previous run's rows are the record of that run and stay visible on the
+        // queue screen until here -- a new run is what clears them.
+        mutableQueue.update { emptyMap() }
+        failedPlaylists = 0
+        scanFailure = null
         mutableDownloaderState.update { State.DownloadingPlaylist() }
 
         applicationScope.launch(Dispatchers.IO) {
             // Counted outside the body so the finally block can report them on every exit
-            // path, cancellation included.
-            var downloadedCount = 0
+            // path, cancellation included. Downloads finish on several coroutines at once,
+            // so the successes are tallied atomically rather than with `++`, which would
+            // drop increments that interleave.
+            val downloadedCount = AtomicInteger()
+            val failedCount = AtomicInteger()
             var deletedCount = 0
+            // Set by whichever early return stopped the run, and read in the finally block.
+            // Without it every abort reached the summary card as a plain (0, 0), which the
+            // card could only render as "already up to date" -- the most misleading thing
+            // it could possibly say about a sync that never got as far as comparing.
+            var abortReason: String? = null
 
             try {
-                refreshPlaylistMetadata(playlists, apiKey)
-
                 val preferences = DownloadUtil.DownloadPreferences(
                     extractAudio = true,
                     embedThumbnail = true,
@@ -182,17 +367,46 @@ object Downloader {
                     cropArtwork = true
                 )
 
-                // Step 1: enumerate every video across every playlist.
-                val remote = fetchRemoteVideos(playlists, preferences) ?: return@launch
+                // Step 1: enumerate every video across every playlist. The metadata refresh
+                // only feeds the library UI and nothing below depends on it, so it runs
+                // alongside the listing instead of delaying it by a full API round trip per
+                // playlist. It is still awaited before the sync ends so a cancelled run
+                // does not leave a write racing against the next one.
+                updatePhase(Phase.Fetching)
+                // Once per run, here rather than inside the per-playlist listing call --
+                // that fired one identical toast per saved playlist. A sync can be started
+                // from the launcher shortcut with no UI at all, so this is the only
+                // acknowledgement that the tap did anything.
+                ToastUtil.showToast(context.getString(R.string.fetching_playlist_info))
+                val metadataRefresh = launch {
+                    runCatching { refreshPlaylistMetadata(playlists, apiKey) }
+                        .onFailure { Log.e(TAG, "syncPlaylists: metadata refresh failed", it) }
+                }
+                val remote = fetchRemoteVideos(playlists)
+                metadataRefresh.join()
+                if (remote == null) {
+                    // Named counts where we have them: "2 playlists could not be read" is
+                    // actionable in a way that a bare failure notice is not.
+                    abortReason = failedPlaylists.takeIf { it > 0 }
+                        ?.let { context.getString(R.string.sync_fetch_failed, it) }
+                        ?: context.getString(R.string.sync_abort_fetch)
+                    return@launch
+                }
 
                 if (remote.videos.isEmpty()) {
                     Log.e(TAG, "syncPlaylists: abort, no playlist videos fetched")
-                    ToastUtil.showToast(context.getString(R.string.sync_no_playlist_data))
+                    abortReason = context.getString(R.string.sync_no_playlist_data)
                     return@launch
                 }
 
                 // Step 2: scan the destination folder.
-                val existingFiles = scanExistingAudioFiles() ?: return@launch
+                updatePhase(Phase.Scanning)
+                val existingFiles = scanExistingAudioFiles() ?: run {
+                    abortReason = scanFailure?.takeIf { it.isNotBlank() }
+                        ?.let { context.getString(R.string.sync_scan_failed, it) }
+                        ?: context.getString(R.string.sync_abort_scan)
+                    return@launch
+                }
 
                 // Step 3: index local files by embedded video id, and by normalized basename
                 // so files downloaded before ids were in the template still match.
@@ -214,6 +428,7 @@ object Downloader {
                 // Step 5: delete identifiable local files that no longer belong to any playlist.
                 // Only files carrying an id are eligible, so untracked files are never touched.
                 val filesToDelete = filesByVideoId.filterKeys { it !in remote.videos }
+                if (filesToDelete.isNotEmpty()) updatePhase(Phase.Deleting)
                 filesToDelete.forEach { (videoId, file) ->
                     runCatching {
                         if (DocumentFile.fromSingleUri(context, file.uri)?.delete() == true) {
@@ -224,6 +439,16 @@ object Downloader {
                     }.onFailure { Log.e(TAG, "syncPlaylists: failed to delete ${file.name}", it) }
                 }
                 deletedCount = filesToDelete.size
+                // Published as it lands, so a run whose only work is deletion has something
+                // truthful to show instead of sitting on the "preparing" placeholder.
+                mutableDownloaderState.update {
+                    if (it is State.DownloadingPlaylist) it.copy(deleted = deletedCount) else it
+                }
+                if (deletedCount > 0) {
+                    NotificationUtil.updateServiceNotificationForPhase(
+                        Phase.Deleting, deletedCount
+                    )
+                }
 
                 // Step 6: download whatever is still missing.
                 val videosToDownload = remote.videos.filterKeys { it !in presentVideoIds }
@@ -235,143 +460,236 @@ object Downloader {
                 )
 
                 if (downloadCount == 0) {
-                    ToastUtil.showToast(context.getString(R.string.sync_already_synced))
+                    // Nothing to download, but not necessarily nothing done -- this run may
+                    // have just deleted files. The completion toast in finishProcessing
+                    // reports whichever it was, which the old unconditional "already synced"
+                    // toast here could not: it fired even for runs that had removed files.
                     return@launch
                 }
 
-                videosToDownload.entries.forEachIndexed { index, (videoId, source) ->
-                    if (downloaderState.value !is State.DownloadingPlaylist) {
-                        Log.d(TAG, "syncPlaylists: cancelled")
-                        return@launch
+                updatePhase(Phase.Downloading)
+                // The listing, scan and delete steps can run for minutes on a large library,
+                // so mark the point where transfers actually begin -- and say how many, which
+                // is the first moment the run knows. Shortcut-triggered syncs have no other
+                // sign of this, and "fetching" followed by a long silence reads as a stall.
+                ToastUtil.showToast(
+                    context.resources.getQuantityString(
+                        R.plurals.sync_starting_downloads, downloadCount, downloadCount
+                    )
+                )
+
+                // Items download [MAX_CONCURRENT_DOWNLOADS] at a time. Each one blocks a
+                // thread for its whole life -- yt-dlp is an external process the wrapper
+                // waits on -- so they are launched on Dispatchers.IO, whose pool is sized
+                // for exactly that, and the semaphore is what actually caps how many run.
+                //
+                // coroutineScope makes this the join point: it returns only once every
+                // child has finished, so the finally block below cannot report the run as
+                // over while downloads are still writing files.
+                // Seed the whole run before any of it starts, so the queue screen can show
+                // what is waiting rather than only the handful in flight. Insertion order
+                // is preserved, and it is also the order items are picked up in.
+                mutableQueue.update {
+                    videosToDownload.entries.associate { (videoId, title) ->
+                        videoId to TrackDownload(videoId = videoId, title = title)
                     }
+                }
 
-                    mutableDownloaderState.update {
-                        if (it is State.DownloadingPlaylist) {
-                            it.copy(currentItem = index + 1, itemCount = downloadCount)
-                        } else return@launch
-                    }
-                    NotificationUtil.updateServiceNotificationForPlaylist(index + 1, downloadCount)
+                val startedItems = AtomicInteger()
+                val finishedItems = AtomicInteger()
+                val semaphore = Semaphore(MAX_CONCURRENT_DOWNLOADS)
+                coroutineScope {
+                    videosToDownload.forEach { (videoId, title) ->
+                        launch(Dispatchers.IO) {
+                            semaphore.withPermit {
+                                // Checked inside the permit, not before it: a cancellation
+                                // during the run should stop the items still queued behind
+                                // it, and those may have been waiting here for minutes.
+                                // Returning from this child leaves the others alone -- the
+                                // ones already downloading finish, and their files are kept.
+                                if (downloaderState.value !is State.DownloadingPlaylist) {
+                                    Log.d(TAG, "syncPlaylists: cancelled, skipping $videoId")
+                                    // Marked rather than dropped, so the queue screen says
+                                    // the run was cut short instead of leaving rows that
+                                    // look like they are still waiting their turn.
+                                    updateTrack(videoId) {
+                                        it.copy(status = TrackDownload.Status.Skipped)
+                                    }
+                                    return@withPermit
+                                }
 
-                    val (playlistUrl, playlistIndex) = source
-                    Log.d(TAG, "syncPlaylists: [${index + 1}/$downloadCount] $videoId")
+                                val position = startedItems.incrementAndGet()
+                                Log.d(TAG, "syncPlaylists: [$position/$downloadCount] $videoId")
 
-                    DownloadUtil.fetchVideoInfoFromUrl(
-                        url = playlistUrl,
-                        playlistItem = playlistIndex,
-                        preferences = preferences
-                    ).onSuccess { videoInfo ->
-                        if (downloaderState.value !is State.DownloadingPlaylist) return@launch
-                        // Download the single video rather than the playlist, so yt-dlp does not
-                        // re-walk every item for each entry.
-                        downloadVideo(videoInfo, preferences)
-                            .onSuccess { downloadedCount++ }
-                            .onFailure { th ->
-                                reportItemError(th, videoInfo.originalUrl, isFetchingInfo = false)
+                                // Straight to the download: the listing already gave us the
+                                // id and the title, which is everything the old separate
+                                // info fetch contributed.
+                                downloadVideo(videoId, title, preferences)
+                                    .onSuccess {
+                                        downloadedCount.incrementAndGet()
+                                        updateTrack(videoId) {
+                                            it.copy(status = TrackDownload.Status.Done)
+                                        }
+                                    }
+                                    .onFailure { th ->
+                                        failedCount.incrementAndGet()
+                                        updateTrack(videoId) {
+                                            it.copy(status = TrackDownload.Status.Failed(th.toReason()))
+                                        }
+                                        reportItemError(th, videoId, isFetchingInfo = false)
+                                    }
+
+                                // Counted on the way out, not on the way in: with several
+                                // running at once, reporting "n of m" as each one *starts*
+                                // jumps straight to 3 while nothing has actually landed.
+                                // Finished items are what the number is claiming to mean.
+                                val done = finishedItems.incrementAndGet()
+                                mutableDownloaderState.update {
+                                    if (it is State.DownloadingPlaylist) {
+                                        it.copy(currentItem = done, itemCount = downloadCount)
+                                    } else it
+                                }
+                                NotificationUtil.updateServiceNotificationForPlaylist(
+                                    done, downloadCount, queueSummary.value.downloading
+                                )
                             }
-                    }.onFailure { th ->
-                        reportItemError(th, playlistUrl, isFetchingInfo = true)
+                        }
                     }
                 }
 
                 Log.d(TAG, "syncPlaylists: complete")
                 // The summary card on the home screen reports the counts now; a toast on top
                 // of it would say the same thing twice.
+            } catch (ce: CancellationException) {
+                // Cancellation is not a failure, and the finally block already reports it
+                // as its own outcome. Rethrown so the coroutine still unwinds normally.
+                throw ce
+            } catch (th: Throwable) {
+                // Anything the steps above did not anticipate. Caught only to label the run
+                // as failed -- without this it reached the finally block indistinguishable
+                // from a clean no-op run, and the card announced "already up to date" for a
+                // sync that had just thrown. Rethrown so the failure is not swallowed.
+                Log.e(TAG, "syncPlaylists: failed", th)
+                abortReason = th.toReason()
+                throw th
             } finally {
                 // Every exit path lands here, so a cancelled or failed run still clears the
                 // notification and returns to Idle. Without this the state stays
                 // DownloadingPlaylist forever, the foreground service is never stopped, and
                 // isDownloaderAvailable() rejects every later sync until the process dies.
                 finishProcessing(
-                    downloaded = downloadedCount,
+                    downloaded = downloadedCount.get(),
                     deleted = deletedCount,
+                    failed = failedCount.get(),
                     // Whoever cancelled flipped the state off DownloadingPlaylist first.
                     cancelled = downloaderState.value !is State.DownloadingPlaylist,
+                    error = abortReason,
                 )
-            }
-        }
-    }
-
-    /** A remote video: which playlist it came from, and its 1-based index within it. */
-    private data class VideoSource(val playlistUrl: String, val playlistIndex: Int)
-
-    private data class RemoteVideos(
-        val videos: Map<String, VideoSource>,
-        /** videoId -> normalized title, for matching files downloaded without an id suffix. */
-        val normalizedTitles: Map<String, String>,
-    )
-
-    /** Refreshes stored playlist metadata; failures for one playlist don't stop the rest. */
-    private suspend fun refreshPlaylistMetadata(playlists: List<PlaylistEntry>, apiKey: String) {
-        Log.d(TAG, "refreshPlaylistMetadata: refreshing ${playlists.size} playlists")
-        playlists.forEach { playlist ->
-            runCatching {
-                val playlistId = playlist.playlistId
-                    ?: YouTubeApiService.extractPlaylistId(playlist.url)
-                    ?: return@runCatching
-                val info = YouTubeApiService.getPlaylistInfo(playlistId, apiKey)
-                    ?: return@runCatching
-                DatabaseUtil.updatePlaylist(
-                    playlist.copy(
-                        title = info.title,
-                        thumbnailUrl = info.thumbnailUrl,
-                        videoCount = info.videoCount,
-                        channelTitle = info.channelTitle,
-                        description = info.description,
-                        lastSynced = System.currentTimeMillis(),
-                        playlistId = playlistId
-                    )
-                )
-            }.onFailure {
-                Log.e(TAG, "refreshPlaylistMetadata: failed for ${playlist.title}", it)
             }
         }
     }
 
     /**
+     * Every video across every playlist, as videoId -> title.
+     *
+     * This used to carry the owning playlist URL and the video's 1-based index within it,
+     * which existed only to address the video as `--playlist-items N` of that playlist.
+     * Downloads now go straight to the video by id, so the title -- shown while it
+     * downloads -- is all that is left to keep.
+     */
+    private data class RemoteVideos(
+        val videos: Map<String, String>,
+        /** videoId -> normalized title, for matching files downloaded without an id suffix. */
+        val normalizedTitles: Map<String, String>,
+    )
+
+    /**
+     * Refreshes stored playlist metadata; failures for one playlist don't stop the rest.
+     *
+     * One independent YouTube API round trip per playlist, so they go out together rather
+     * than serially.
+     */
+    private suspend fun refreshPlaylistMetadata(
+        playlists: List<PlaylistEntry>,
+        apiKey: String,
+    ): Unit = coroutineScope {
+        Log.d(TAG, "refreshPlaylistMetadata: refreshing ${playlists.size} playlists")
+        playlists.map { playlist ->
+            async {
+                runCatching {
+                    val playlistId = playlist.playlistId
+                        ?: YouTubeApiService.extractPlaylistId(playlist.url)
+                        ?: return@runCatching
+                    val info = YouTubeApiService.getPlaylistInfo(playlistId, apiKey)
+                        ?: return@runCatching
+                    DatabaseUtil.updatePlaylist(
+                        playlist.copy(
+                            title = info.title,
+                            thumbnailUrl = info.thumbnailUrl,
+                            videoCount = info.videoCount,
+                            channelTitle = info.channelTitle,
+                            description = info.description,
+                            lastSynced = System.currentTimeMillis(),
+                            playlistId = playlistId
+                        )
+                    )
+                }.onFailure {
+                    Log.e(TAG, "refreshPlaylistMetadata: failed for ${playlist.title}", it)
+                }
+            }
+        }.awaitAll()
+    }
+
+    /**
      * Enumerates every video in every playlist. Returns null if any playlist failed to
      * fetch: a partial listing would make step 5 delete files that are still wanted.
+     *
+     * Each listing is a yt-dlp launch that spends most of its wall time blocked on the
+     * network, so they run concurrently rather than one after another -- a sync of several
+     * playlists used to pay the full round trip once per playlist before it could start.
+     * The results are merged on this coroutine afterwards, so the maps stay single-threaded.
      */
-    private fun fetchRemoteVideos(
-        playlists: List<PlaylistEntry>,
-        preferences: DownloadUtil.DownloadPreferences,
-    ): RemoteVideos? {
-        val videos = mutableMapOf<String, VideoSource>()
-        val normalizedTitles = mutableMapOf<String, String>()
-        var failures = 0
+    private suspend fun fetchRemoteVideos(playlists: List<PlaylistEntry>): RemoteVideos? =
+        coroutineScope {
+            val results = playlists
+                .map { entry -> entry to async { DownloadUtil.getPlaylistOrVideoInfo(entry.url) } }
+                .map { (entry, deferred) -> entry to deferred.await() }
 
-        playlists.forEach { entry ->
-            DownloadUtil.getPlaylistOrVideoInfo(
-                playlistURL = entry.url,
-                downloadPreferences = preferences
-            ).onSuccess { info ->
-                when (info) {
-                    is PlaylistResult -> info.entries.orEmpty()
-                        .forEachIndexed { index, playlistItem ->
-                            val videoId = playlistItem.id ?: return@forEachIndexed
-                            videos[videoId] = VideoSource(entry.url, index + 1)
-                            playlistItem.title?.let { normalizedTitles[videoId] = normalizeName(it) }
+            val videos = mutableMapOf<String, String>()
+            val normalizedTitles = mutableMapOf<String, String>()
+            var failures = 0
+
+            results.forEach { (entry, result) ->
+                result.onSuccess { info ->
+                    when (info) {
+                        is PlaylistResult -> info.entries.orEmpty().forEach entries@{ item ->
+                            val videoId = item.id ?: return@entries
+                            val title = item.title.orEmpty()
+                            videos[videoId] = title
+                            if (title.isNotEmpty()) normalizedTitles[videoId] = normalizeName(title)
                         }
 
-                    is VideoInfo -> {
-                        videos[info.id] = VideoSource(entry.url, 0)
-                        info.title.takeIf { it.isNotEmpty() }
-                            ?.let { normalizedTitles[info.id] = normalizeName(it) }
+                        is VideoInfo -> {
+                            videos[info.id] = info.title
+                            info.title.takeIf { it.isNotEmpty() }
+                                ?.let { normalizedTitles[info.id] = normalizeName(it) }
+                        }
                     }
+                }.onFailure {
+                    failures++
+                    Log.e(TAG, "fetchRemoteVideos: failed for '${entry.title}': ${it.message}")
                 }
-            }.onFailure {
-                failures++
-                Log.e(TAG, "fetchRemoteVideos: failed for '${entry.title}': ${it.message}")
             }
-        }
 
-        if (failures > 0) {
-            ToastUtil.showToast(
-                context.getString(R.string.sync_fetch_failed, failures)
-            )
-            return null
+            if (failures > 0) {
+                // No toast: the caller turns this into the summary card's message, which
+                // stays put until dismissed rather than fading before it can be read.
+                Log.e(TAG, "fetchRemoteVideos: $failures playlist(s) failed, aborting sync")
+                failedPlaylists = failures
+                return@coroutineScope null
+            }
+            RemoteVideos(videos, normalizedTitles)
         }
-        return RemoteVideos(videos, normalizedTitles)
-    }
 
     /** Lists audio files in the configured folder, preferring the SAF tree when set. */
     private fun scanExistingAudioFiles(): List<AudioFileData>? {
@@ -382,9 +700,7 @@ object Downloader {
                     .filter { !it.name.startsWith(".trashed-") }
             }.getOrElse {
                 Log.e(TAG, "scanExistingAudioFiles: SAF scan failed", it)
-                ToastUtil.showToast(
-                    context.getString(R.string.sync_scan_failed, it.message.orEmpty())
-                )
+                scanFailure = it.message.orEmpty()
                 null
             }
         }
@@ -413,23 +729,55 @@ object Downloader {
     private fun normalizeName(s: String): String =
         s.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "")
 
+    /**
+     * Marks one track in the run, if it is still part of it. A no-op once the next sync
+     * has cleared the map, so a late callback from a process still winding down cannot
+     * resurrect a row that belongs to a finished run.
+     */
+    private fun updateTrack(videoId: String, transform: (TrackDownload) -> TrackDownload) {
+        mutableQueue.update { tracks ->
+            val track = tracks[videoId] ?: return@update tracks
+            tracks + (videoId to transform(track))
+        }
+    }
+
+    /** A failure message worth showing on a queue row; some throwables carry none. */
+    private fun Throwable.toReason(): String =
+        message?.takeIf { it.isNotBlank() }?.trim()?.lines()?.last()
+            ?: this::class.simpleName.orEmpty()
+
+    /**
+     * Downloads one video, publishing its progress into [mutableQueue] for as long as it
+     * runs. Safe to call from several coroutines at once: the entry is keyed by [videoId],
+     * so concurrent items report side by side instead of overwriting one shared slot.
+     *
+     * The row is left in place on the way out rather than removed -- the caller settles it
+     * as Done or Failed, and it stays on the queue screen as the record of the run.
+     */
     @CheckResult
     private fun downloadVideo(
-        videoInfo: VideoInfo,
+        videoId: String,
+        title: String,
         preferences: DownloadUtil.DownloadPreferences,
     ): Result<List<String>> {
-        mutableTaskState.update { DownloadTaskItem(title = videoInfo.title) }
-        val taskId = videoInfo.id + preferences.hashCode()
-        Log.d(TAG, "downloadVideo: ${videoInfo.id} ${videoInfo.title}")
+        updateTrack(videoId) { it.copy(status = TrackDownload.Status.Downloading()) }
+        val taskId = videoId + preferences.hashCode()
+        Log.d(TAG, "downloadVideo: $videoId $title")
 
-        return DownloadUtil.downloadVideo(
-            videoInfo = videoInfo,
+        return DownloadUtil.downloadVideoById(
+            videoId = videoId,
             downloadPreferences = preferences,
             taskId = taskId
         ) { progress, _, line ->
             // Per-item progress goes to the shared service notification counter, not to
             // a notification of its own, so a sync doesn't spam one per video.
-            mutableTaskState.update { it.copy(progress = progress, progressText = line) }
+            updateTrack(videoId) { track ->
+                // Guarded: a callback arriving after the item was settled must not drag
+                // the row back into Downloading.
+                if (track.status is TrackDownload.Status.Downloading) {
+                    track.copy(status = TrackDownload.Status.Downloading(progress, line))
+                } else track
+            }
         }
     }
 
@@ -437,19 +785,81 @@ object Downloader {
      * Ends the run: clears the ongoing notification (leaving a summary when anything
      * happened) and returns to Idle, which unbinds the foreground service.
      */
-    private fun finishProcessing(downloaded: Int = 0, deleted: Int = 0, cancelled: Boolean = false) {
+    private fun finishProcessing(
+        downloaded: Int = 0,
+        deleted: Int = 0,
+        failed: Int = 0,
+        cancelled: Boolean = false,
+        error: String? = null,
+    ) {
         // No early return when already Idle: a cancelled sync reaches here with the state
         // flipped to Idle by whoever cancelled it, and the ongoing notification still
         // posted. Both steps below are idempotent, so running them twice is harmless.
-        NotificationUtil.finishPlaylistNotification(downloaded, deleted)
-        mutableTaskState.update { it.copy(progress = 100f, progressText = "") }
+        NotificationUtil.finishPlaylistNotification(downloaded, deleted, failed, cancelled, error)
+        // Said once, whatever the outcome. The summary card covers the app, but a sync
+        // started from the launcher shortcut never shows it, and the run would otherwise
+        // finish in complete silence.
+        ToastUtil.showToast(syncOutcomeText(downloaded, deleted, failed, cancelled, error))
+        // A finished run leaves only what still needs attention.
+        retainFailedTracks()
         // Publish the outcome for the summary card. This is the in-app replacement for the
         // completion toast, which was the only sign a sync had ever finished.
-        mutableSyncResult.update { SyncResult(downloaded, deleted, cancelled) }
+        mutableSyncResult.update { SyncResult(downloaded, deleted, cancelled, failed, error) }
         updateState(State.Idle)
         // Deliberately not clearing the error state: any item that failed during the run
         // is the one thing worth showing once it ends. Clearing here wiped the banner
         // before it could render. The next sync clears it on the way in instead.
+    }
+
+    /**
+     * One sentence describing how the run ended, for the completion toast.
+     *
+     * Deliberately mirrors the summary card's cases: an abort, a cancellation, a run that
+     * changed something, and a genuine no-op are four different outcomes, and collapsing
+     * any of them into "already synced" is what made the old toast lie.
+     */
+    private fun syncOutcomeText(
+        downloaded: Int,
+        deleted: Int,
+        failed: Int,
+        cancelled: Boolean,
+        error: String?,
+    ): String {
+        if (error != null) return error
+
+        val parts = listOfNotNull(
+            downloaded.takeIf { it > 0 }?.let { context.getString(R.string.sync_downloaded, it) },
+            deleted.takeIf { it > 0 }?.let { context.getString(R.string.sync_deleted, it) },
+            failed.takeIf { it > 0 }
+                ?.let { context.getString(R.string.sync_result_failed_count, it) },
+        ).joinToString(", ")
+
+        val prefix = when {
+            cancelled -> context.getString(R.string.sync_result_cancelled)
+            parts.isEmpty() -> return context.getString(R.string.sync_result_up_to_date)
+            else -> context.getString(R.string.sync_complete)
+        }
+        return if (parts.isEmpty()) prefix else "$prefix: $parts"
+    }
+
+    /**
+     * Drops every row the run settled successfully, keeping only the failures.
+     *
+     * A finished sync has nothing to say about the tracks that worked -- the summary card
+     * already gives the count, and a list of them is just the queue screen refusing to
+     * empty. What does not survive a toast is *why* something failed, so those rows stay
+     * until the next sync clears them.
+     *
+     * Cancelled and still-unstarted items go too: cancelling was deliberate, and an item
+     * that never ran is not a problem to report. Anything left mid-flight is swept up here
+     * as well -- the normal path settles every item, but a throw out of the sync body skips
+     * the download loop entirely, and a row frozen mid-download would otherwise read as
+     * live work on a screen the run has already left.
+     */
+    private fun retainFailedTracks() {
+        mutableQueue.update { tracks ->
+            tracks.filterValues { it.status is TrackDownload.Status.Failed }
+        }
     }
 
     /**
@@ -459,11 +869,11 @@ object Downloader {
     private fun reportItemError(th: Throwable, url: String?, isFetchingInfo: Boolean) {
         if (th is YoutubeDL.CanceledException) return
         th.printStackTrace()
-        ToastUtil.showToast(
-            context.getString(
-                if (isFetchingInfo) R.string.fetch_info_error_msg else R.string.download_error_msg
-            )
-        )
+        // No toast per failure. Items download several at a time and a bad playlist can
+        // fail dozens of them, which queued dozens of identical toasts that then outlived
+        // the run they described. The banner below holds the latest reason, the summary
+        // card carries the count, and the queue screen keeps every one of them with its
+        // own message.
 
         val report = th.message.toString()
         mutableErrorState.update {

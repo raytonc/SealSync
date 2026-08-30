@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Error
+import androidx.compose.material.icons.outlined.Downloading
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
@@ -40,6 +41,8 @@ import androidx.compose.material.icons.outlined.Subscriptions
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -93,6 +96,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.junkfood.seal.App
 import com.junkfood.seal.Downloader
 import com.junkfood.seal.R
+import com.junkfood.seal.TrackDownload
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
@@ -125,12 +129,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 fun DownloadPage(
     navigateToSettings: () -> Unit = {},
     navigateToDownloads: () -> Unit = {},
+    navigateToQueue: () -> Unit = {},
     playlistViewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val view = LocalView.current
     val clipboardManager = LocalClipboardManager.current
     val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
-    val taskState by Downloader.taskState.collectAsStateWithLifecycle()
+    val queueSummary by Downloader.queueSummary.collectAsStateWithLifecycle()
+    val queue by Downloader.queue.collectAsStateWithLifecycle()
     val syncResult by Downloader.syncResult.collectAsStateWithLifecycle()
     val errorState by Downloader.errorState.collectAsStateWithLifecycle()
     val playlists by playlistViewModel.playlistsFlow.collectAsStateWithLifecycle()
@@ -146,6 +152,9 @@ fun DownloadPage(
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     val isSyncing = downloaderState is Downloader.State.DownloadingPlaylist
+    val runState = downloaderState as? Downloader.State.DownloadingPlaylist
+    val syncPhase = runState?.phase ?: Downloader.Phase.Fetching
+    val deletedSoFar = runState?.deleted ?: 0
 
     // The key lives outside the observable settings flow, and the only way to set it is the
     // Settings screen, so re-read it whenever this screen comes back to the foreground.
@@ -161,13 +170,15 @@ fun DownloadPage(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // A finished sync deserves a moment of acknowledgement, then it gets out of the way.
+    // A finished sync deserves a moment of acknowledgement, then it gets out of the way --
+    // except when it failed, where the card is the only account of what went wrong and
+    // timing it out just hides the problem. Those wait for the dismiss button.
     LaunchedEffect(syncResult) {
-        if (syncResult != null) {
-            view.slightHapticFeedback()
-            delay(6000)
-            Downloader.clearSyncResult()
-        }
+        val result = syncResult ?: return@LaunchedEffect
+        view.slightHapticFeedback()
+        if (result.error != null) return@LaunchedEffect
+        delay(6000)
+        Downloader.clearSyncResult()
     }
 
     val checkNetworkOrDownload = {
@@ -279,6 +290,38 @@ fun DownloadPage(
                     TooltipBox(
                         state = rememberTooltipState(),
                         positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.download_queue)) } }
+                    ) {
+                        IconButton(
+                            onClick = {
+                                view.slightHapticFeedback()
+                                navigateToQueue()
+                            }
+                        ) {
+                            // Badged while a run is going, so the queue is findable without
+                            // having to guess that anything is happening behind this icon.
+                            BadgedBox(
+                                badge = {
+                                    // Only once there is a queue to badge. The earlier
+                                    // phases have nothing downloading, and a badge reading
+                                    // "0" says the run is idle when it is not.
+                                    if (isSyncing && queueSummary.downloading > 0) {
+                                        Badge {
+                                            Text(text = queueSummary.downloading.toString())
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Downloading,
+                                    contentDescription = stringResource(id = R.string.download_queue)
+                                )
+                            }
+                        }
+                    }
+                    TooltipBox(
+                        state = rememberTooltipState(),
+                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
                         tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.downloads_history)) } }
                     ) {
                         IconButton(
@@ -345,17 +388,21 @@ fun DownloadPage(
                     ),
                     exit = fadeOut() + shrinkVertically(),
                 ) {
-                    val state = downloaderState as? Downloader.State.DownloadingPlaylist
                     SyncProgressCard(
                         modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                        currentItem = state?.currentItem ?: 0,
-                        itemCount = state?.itemCount ?: 0,
-                        currentTitle = taskState.title,
-                        // The downloader reports 0..100; the bar wants 0..1.
-                        itemProgress = taskState.progress / 100f,
+                        summary = queueSummary,
+                        phase = syncPhase,
+                        deleted = deletedSoFar,
+                        activeTitles = queue.mapNotNull { track ->
+                            track.title.takeIf { track.status is TrackDownload.Status.Downloading }
+                        },
                         onCancel = {
                             view.slightHapticFeedback()
                             Downloader.cancelSync()
+                        },
+                        onOpenQueue = {
+                            view.slightHapticFeedback()
+                            navigateToQueue()
                         },
                     )
                 }
@@ -368,8 +415,7 @@ fun DownloadPage(
                     syncResult?.let { result ->
                         SyncSummaryCard(
                             modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                            downloaded = result.downloaded,
-                            deleted = result.deleted,
+                            result = result,
                             onDismiss = { Downloader.clearSyncResult() },
                         )
                     }

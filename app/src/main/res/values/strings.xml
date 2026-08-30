@@ -55,4 +55,59 @@
     <string name="pin_shortcut_desc">Add a Sync shortcut to your home screen (may prompt the launcher)</string>
     <string name="shortcut_sync_short">Sync</string>
     <string name="shortcut_sync_long">Sync playlists with local folder</string>
+    <!-- Download queue -->
+    <string name="download_queue">Download queue</string>
+    <string name="sync_progress_title">Downloading %1$d of %2$d</string>
+    <string name="sync_preparing">Preparing sync</string>
+    <!-- Sync phases, shown on the home card before any download starts -->
+    <string name="sync_phase_fetching">Checking playlists</string>
+    <string name="sync_phase_scanning">Scanning your folder</string>
+    <string name="sync_phase_deleting">Removing files</string>
+    <string name="sync_phase_deleted_detail">%1$d removed so far</string>
+    <!-- Post-run summary -->
+    <string name="sync_result_up_to_date">Already up to date</string>
+    <string name="sync_result_complete">Sync complete</string>
+    <string name="sync_result_cancelled">Sync cancelled</string>
+    <string name="sync_result_failed">Sync failed</string>
+    <string name="sync_result_nothing_changed">Nothing was changed</string>
+    <string name="sync_result_added">%1$d added</string>
+    <string name="sync_result_removed">%1$d removed</string>
+    <string name="sync_result_failed_count">%1$d failed</string>
+    <string name="sync_abort_fetch">Could not read your playlists, so nothing was changed</string>
+    <string name="sync_abort_scan">Could not read your audio folder, so nothing was changed</string>
+    <string name="sync_dismiss">Dismiss</string>
+    <string name="queue_empty_title">Nothing in the queue</string>
+    <string name="queue_empty_body">Tracks appear here while a sync is running. Anything that fails stays until the next sync.</string>
+    <string name="queue_status_queued">Queued</string>
+    <string name="queue_status_done">Downloaded</string>
+    <string name="queue_status_skipped">Skipped — sync cancelled</string>
+    <string name="queue_copy_error">Copy error</string>
+    <string name="queue_section_active">Downloading</string>
+    <string name="queue_section_waiting">Waiting</string>
+    <string name="queue_section_finished">Finished</string>
+    <string name="queue_section_failed">Failed</string>
+    <string name="queue_failed_body">Everything else downloaded. These stay here until the next sync.</string>
+    <string name="queue_cancel_sync">Cancel sync</string>
+    <string name="queue_progress">%1$d of %2$d</string>
+    <string name="notification_sync_progress">Synced %1$d of %2$d</string>
+    <plurals name="notification_downloading_now">
+        <item quantity="one">%1$d downloading now</item>
+        <item quantity="other">%1$d downloading now</item>
+    </plurals>
+    <plurals name="sync_starting_downloads">
+        <item quantity="one">Downloading %1$d track</item>
+        <item quantity="other">Downloading %1$d tracks</item>
+    </plurals>
+    <plurals name="queue_downloading_now">
+        <item quantity="one">%1$d downloading</item>
+        <item quantity="other">%1$d downloading</item>
+    </plurals>
+    <plurals name="queue_failed_title">
+        <item quantity="one">%1$d track failed</item>
+        <item quantity="other">%1$d tracks failed</item>
+    </plurals>
+    <plurals name="queue_failed_count">
+        <item quantity="one">%1$d failed</item>
+        <item quantity="other">%1$d failed</item>
+    </plurals>
 </resources>

@@ -36,6 +36,7 @@ import com.junkfood.seal.ui.common.LocalWindowWidthState
 import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.common.animatedComposable
 import com.junkfood.seal.ui.page.download.DownloadPage
+import com.junkfood.seal.ui.page.queue.DownloadQueuePage
 import com.junkfood.seal.ui.page.settings.SettingsPage
 import com.junkfood.seal.ui.page.settings.about.CreditsPage
 import com.junkfood.seal.ui.page.setup.SetupFlowPage
@@ -137,6 +138,7 @@ fun HomeEntry() {
             animatedComposable(Route.HOME) {
                 DownloadPage(
                     navigateToDownloads = { navController.navigate(Route.DOWNLOADS) },
+                    navigateToQueue = { navController.navigate(Route.QUEUE) },
                     navigateToSettings = {
                         navController.navigate(Route.SETTINGS) {
                             launchSingleTop = true
@@ -145,6 +147,7 @@ fun HomeEntry() {
                 )
             }
             animatedComposable(Route.DOWNLOADS) { VideoListPage { onNavigateBack() } }
+            animatedComposable(Route.QUEUE) { DownloadQueuePage { onNavigateBack() } }
             settingsGraph(
                 onNavigateBack = onNavigateBack,
                 onNavigateTo = { route ->

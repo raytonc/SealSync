@@ -206,25 +206,33 @@ object FileUtil {
     /**
      * Registers a finished download with the system media library and returns the media
      * files it produced, excluding the thumbnail sidecars.
+     *
+     * Matched on [videoId] rather than the title: the title is only a substring of the
+     * filename, so a short or generic one ("Intro") matched every file containing it and
+     * handed unrelated media to the scanner. The id is unique and the output template
+     * always embeds it.
+     *
+     * Lists the download directory once instead of walking it recursively. The walk ran
+     * after every single video and stat'd the whole library each time, so a sync of a
+     * large folder spent O(files x downloads) syscalls finding the one or two files that
+     * had just been written -- and yt-dlp only ever writes into this one directory, so
+     * the recursion had nothing to find below it either.
      */
     @CheckResult
-    /**
-     * [videoId] rather than the title: the title is only a substring of the filename, so a
-     * short or generic one ("Intro") matched every file containing it and handed unrelated
-     * media to the scanner. The id is unique and the output template always embeds it.
-     */
-    fun scanFileToMediaLibraryPostDownload(videoId: String, downloadDir: String): List<String> =
-        File(downloadDir)
-            .walkTopDown()
-            .filter { it.isFile && it.name.contains("[$videoId]") }
-            .map { it.absolutePath }
-            .toMutableList()
-            .apply {
-                MediaScannerConnection.scanFile(context, toTypedArray(), null, null)
-                removeAll { path ->
-                    path.substringAfterLast('.', "").lowercase() in THUMBNAIL_EXTENSIONS
-                }
-            }
+    fun collectDownloadedFiles(videoId: String, downloadDir: String): List<String> {
+        val marker = "[$videoId]"
+        val produced = File(downloadDir)
+            .listFiles { file -> file.isFile && file.name.contains(marker) }
+            ?.map { it.absolutePath }
+            .orEmpty()
+
+        if (produced.isEmpty()) return produced
+
+        MediaScannerConnection.scanFile(context, produced.toTypedArray(), null, null)
+        return produced.filterNot { path ->
+            path.substringAfterLast('.', "").lowercase() in THUMBNAIL_EXTENSIONS
+        }
+    }
 
     fun Context.getConfigDirectory(): File = cacheDir
 

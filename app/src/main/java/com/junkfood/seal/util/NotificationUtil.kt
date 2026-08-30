@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE
 import com.junkfood.seal.App
 import com.junkfood.seal.App.Companion.context
+import com.junkfood.seal.Downloader
 import com.junkfood.seal.R
 
 /**
@@ -48,10 +49,23 @@ object NotificationUtil {
         )
     }
 
-    private fun buildServiceNotification(title: String): Notification =
+    /**
+     * The ongoing notification. [progress] is finished-to-total; passing it draws a
+     * determinate bar, and leaving it null draws none (the placeholder has nothing to
+     * count yet).
+     */
+    private fun buildServiceNotification(
+        title: String,
+        subtitle: String? = null,
+        progress: Pair<Int, Int>? = null,
+    ): Notification =
         NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_seal)
             .setContentTitle(title)
+            .apply {
+                subtitle?.let { setContentText(it) }
+                progress?.let { (current, total) -> setProgress(total, current, false) }
+            }
             .setOngoing(true)
             .setForegroundServiceBehavior(FOREGROUND_SERVICE_IMMEDIATE)
             .build()
@@ -64,10 +78,47 @@ object NotificationUtil {
     fun makePlaceholderServiceNotification(): Notification =
         buildServiceNotification(context.getString(R.string.service_title))
 
-    fun updateServiceNotificationForPlaylist(index: Int, itemCount: Int) {
+    /**
+     * The pre-download phases on the ongoing notification. These take real time on a large
+     * library, and the placeholder ("SealSync is downloading…") was both wrong about what
+     * was happening and identical for all of them.
+     */
+    fun updateServiceNotificationForPhase(phase: Downloader.Phase, deleted: Int = 0) {
+        val title = when (phase) {
+            Downloader.Phase.Fetching -> R.string.sync_phase_fetching
+            Downloader.Phase.Scanning -> R.string.sync_phase_scanning
+            Downloader.Phase.Deleting -> R.string.sync_phase_deleting
+            // Driven by updateServiceNotificationForPlaylist, which has counts to show.
+            Downloader.Phase.Downloading -> return
+        }
         notificationManager.notify(
             SERVICE_NOTIFICATION_ID,
-            buildServiceNotification("${context.getString(R.string.service_title)} ($index/$itemCount)")
+            buildServiceNotification(
+                title = context.getString(title),
+                subtitle = deleted.takeIf { it > 0 }
+                    ?.let { context.getString(R.string.sync_phase_deleted_detail, it) },
+            )
+        )
+    }
+
+    /**
+     * Progress on the ongoing notification. [finished] counts items that have settled and
+     * [downloading] how many are in flight right now -- several run at once, so the count
+     * alone would suggest the sync had stalled between one item landing and the next.
+     */
+    fun updateServiceNotificationForPlaylist(finished: Int, itemCount: Int, downloading: Int = 0) {
+        val text = context.getString(R.string.notification_sync_progress, finished, itemCount)
+        notificationManager.notify(
+            SERVICE_NOTIFICATION_ID,
+            buildServiceNotification(
+                title = text,
+                subtitle = downloading.takeIf { it > 0 }?.let {
+                    context.resources.getQuantityString(
+                        R.plurals.notification_downloading_now, it, it
+                    )
+                },
+                progress = itemCount.takeIf { it > 0 }?.let { finished to it },
+            )
         )
     }
 
@@ -75,26 +126,43 @@ object NotificationUtil {
      * Drops the ongoing foreground notification and, if anything actually happened,
      * leaves a dismissible summary behind on a separate id.
      */
-    fun finishPlaylistNotification(downloadedCount: Int, deletedCount: Int = 0) {
+    fun finishPlaylistNotification(
+        downloadedCount: Int,
+        deletedCount: Int = 0,
+        failedCount: Int = 0,
+        cancelled: Boolean = false,
+        error: String? = null,
+    ) {
         // Removing a foreground notification requires stopForeground; cancel() alone won't do it.
         App.downloadService?.stopForeground(Service.STOP_FOREGROUND_REMOVE)
         notificationManager.cancel(SERVICE_NOTIFICATION_ID)
 
         if (!PreferenceUtil.getValue(NOTIFICATION)) return
-        if (downloadedCount == 0 && deletedCount == 0) return
+        // A run that aborted or lost tracks is worth a notification even though it moved no
+        // files -- that used to be indistinguishable from a no-op sync, so it stayed silent.
+        val worthReporting =
+            downloadedCount > 0 || deletedCount > 0 || failedCount > 0 || error != null
+        if (!worthReporting) return
 
-        val summary = listOfNotNull(
+        val title = when {
+            error != null -> R.string.sync_result_failed
+            cancelled -> R.string.sync_result_cancelled
+            else -> R.string.sync_complete
+        }
+        val summary = error ?: listOfNotNull(
             downloadedCount.takeIf { it > 0 }
                 ?.let { context.getString(R.string.sync_downloaded, it) },
             deletedCount.takeIf { it > 0 }
                 ?.let { context.getString(R.string.sync_deleted, it) },
+            failedCount.takeIf { it > 0 }
+                ?.let { context.getString(R.string.sync_result_failed_count, it) },
         ).joinToString(", ")
 
         notificationManager.notify(
             COMPLETION_NOTIFICATION_ID,
             NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_seal)
-                .setContentTitle(context.getString(R.string.sync_complete))
+                .setContentTitle(context.getString(title))
                 .setContentText(summary)
                 .setOngoing(false)
                 .setAutoCancel(true)
