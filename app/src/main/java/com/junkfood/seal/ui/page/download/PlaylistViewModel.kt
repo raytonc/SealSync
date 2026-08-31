@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -232,7 +233,13 @@ class PlaylistViewModel @Inject constructor() : ViewModel() {
      */
     fun removePlaylistByChannelId(channelPlaylistId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            playlistsFlow.value
+            // Queried from the database rather than read off playlistsFlow.value. That
+            // flow is shared with WhileSubscribed(5000), which reverts it to its
+            // emptyList() initial value once the grace period lapses with no collector --
+            // and an empty list here filters to nothing and deletes nothing, so the row
+            // toggles off in the picker while the playlist stays saved. The read has to
+            // see the table, not the last thing the UI happened to be showing.
+            DatabaseUtil.getPlaylistsFlow().first()
                 .filter { it.playlistId == channelPlaylistId || it.url.contains(channelPlaylistId) }
                 .forEach { DatabaseUtil.deletePlaylist(it) }
         }

@@ -123,6 +123,12 @@ class AutoSyncWorker(
         //   WorkManager re-running the worker on backoff, each run holding a foreground
         //   slot and posting an ongoing notification for binaries that cannot work. The
         //   next *scheduled* run gets a fresh process and a fresh chance; this one is done.
+        //   Not `Result.failure()` either, which would take the schedule down with the
+        //   run: FAILURE is terminal for a PeriodicWorkRequest -- WorkerWrapper resets the
+        //   period on SUCCESS and RETRY only, so a failed spec is simply marked FAILED and
+        //   never runs again. One bad unpack would silently end background sync until the
+        //   user next opened the app. Success is the answer that skips this period and
+        //   keeps the next one, exactly as retryUntil does past its cap.
         // - It outruns the ceiling: the device is pathologically slow rather than broken,
         //   which is genuinely worth another attempt from a process where the unpack has
         //   long since settled.
@@ -135,7 +141,7 @@ class AutoSyncWorker(
         }
         ready.onFailure {
             Log.e(TAG, "doWork: yt-dlp init failed, nothing this run can do", it)
-            return Result.failure()
+            return Result.success()
         }
 
         Log.d(
@@ -280,6 +286,18 @@ class AutoSyncWorker(
             // which cancels this coroutine mid-wait. Leaving it set would make the next
             // manual sync silently skip binding its own service.
             App.isWorkerForeground.set(false)
+            // And the binding question re-asked, for the same reason the lost-claim path
+            // above asks it: this worker was the run's foreground host, and the moment the
+            // flag drops it stops being one. The paths that get here with the run still
+            // going -- the wait ceiling expiring, or WorkManager cancelling this coroutine
+            // mid-wait -- leave a sync alive on applicationScope whose ongoing notification
+            // disappears with WorkManager's foreground slot, in a process the low-memory
+            // killer is now free to take. The state collector will not re-ask on its own:
+            // the transition out of Idle happened when this run started, and startService()
+            // answered it by returning immediately on the flag.
+            //
+            // A no-op on the ordinary path, where the run reached Idle before the wait did.
+            Downloader.rebindServiceIfRunning()
         }
     }
 
