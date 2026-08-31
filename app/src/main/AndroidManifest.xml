@@ -3,6 +3,14 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+        WorkManager re-enqueues persisted periodic work from its own BOOT_COMPLETED
+        receiver, which the platform will not deliver to unless the host app holds this.
+        Without it the scheduled sync stops at the first reboot and does not come back
+        until the user next opens the app, which is precisely the case the feature
+        exists to cover.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />

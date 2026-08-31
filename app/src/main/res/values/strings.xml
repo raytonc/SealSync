@@ -103,8 +103,12 @@
     <string name="auto_sync_charging_desc">Wait for the charger before starting a scheduled sync</string>
     <string name="auto_sync_note_unmetered">Scheduled syncs run on Wi-Fi only and wait for the battery to be above low. Turn on cellular downloads to allow mobile data. Android decides the exact timing, so a run may start later than the interval.</string>
     <string name="auto_sync_note_any_network">Scheduled syncs may use mobile data, and wait for the battery to be above low. Android decides the exact timing, so a run may start later than the interval.</string>
-    <string name="queue_status_retrying">Retrying (attempt %1$d) — %2$s</string>
+    <string name="queue_status_retrying">Attempt %1$d failed, retrying — %2$s</string>
     <string name="queue_retry_failed">Retry</string>
+    <plurals name="queue_retrying_count">
+        <item quantity="one">%1$d retrying</item>
+        <item quantity="other">%1$d retrying</item>
+    </plurals>
     <string name="retry_nothing_to_retry">Nothing to retry</string>
     <string name="queue_cancel_sync">Cancel sync</string>
     <string name="queue_progress">%1$d of %2$d</string>

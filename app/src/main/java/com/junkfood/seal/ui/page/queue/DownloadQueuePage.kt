@@ -127,7 +127,11 @@ fun DownloadQueuePage(onNavigateBack: () -> Unit) {
                 } else {
                     FailedRunBanner(
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        failedCount = queue.size,
+                        // The failures themselves, not the whole queue. This branch covers
+                        // every non-running state, and in the window where a retry has
+                        // requeued its rows but the state change has not landed yet, the
+                        // queue holds Queued rows that are emphatically not failures.
+                        failedCount = summary.failed,
                         onRetry = {
                             view.slightHapticFeedback()
                             Downloader.retryFailedDownloads()
@@ -249,6 +253,17 @@ private fun QueueHeader(
                                     R.plurals.queue_downloading_now,
                                     summary.downloading,
                                     summary.downloading,
+                                )
+                            )
+                        }
+                        // Why the bar is standing still: a backing-off item contributes
+                        // nothing to it, so without this line the run reads as stalled.
+                        if (summary.retrying > 0) {
+                            add(
+                                pluralStringResource(
+                                    R.plurals.queue_retrying_count,
+                                    summary.retrying,
+                                    summary.retrying,
                                 )
                             )
                         }
@@ -426,9 +441,12 @@ private fun TrackRow(
                     // out a backoff does not read as an unexplained pause.
                     is TrackDownload.Status.Retrying -> {
                         Text(
+                            // status.attempt is the attempt that just failed, which is also
+                            // what Failed.attempts counts -- so the two agree, and a row
+                            // never announces an attempt that has not happened.
                             text = stringResource(
                                 R.string.queue_status_retrying,
-                                status.attempt + 1,
+                                status.attempt,
                                 status.reason,
                             ),
                             style = MaterialTheme.typography.bodySmall,

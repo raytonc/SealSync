@@ -94,10 +94,10 @@ class App : Application(), ImageLoaderFactory {
         if (Build.VERSION.SDK_INT >= 26) NotificationUtil.createNotificationChannel()
 
         // Reapply the scheduled sync on every start. WorkManager persists its own schedule
-        // across reboots and updates, so this is not what keeps it alive -- it is what
-        // keeps it *correct*: the constraints are derived from preferences that can change
-        // while no scheduling code runs (the cellular switch, most notably), and an
-        // UPDATE-policy enqueue of an unchanged request is a no-op.
+        // across reboots (given RECEIVE_BOOT_COMPLETED) and updates, so this is not what
+        // keeps it alive -- it is what keeps it *correct*: the constraints are derived from
+        // preferences that can change while no scheduling code runs, and the enqueue uses
+        // UPDATE, so an unchanged request is inert and a changed one is rewritten in place.
         AutoSyncWorker.reschedule(this)
 
 
@@ -187,12 +187,29 @@ class App : Application(), ImageLoaderFactory {
             val appContext = context.applicationContext
             Intent(appContext, DownloadService::class.java).also { intent ->
                 // The service goes foreground in onCreate, so startForegroundService is safe here.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appContext.startForegroundService(intent)
-                } else {
-                    appContext.startService(intent)
-                }
-                appContext.bindService(intent, connection, BIND_AUTO_CREATE)
+                //
+                // Guarded all the same. From Android 12 this throws
+                // ForegroundServiceStartNotAllowedException when the process is already in
+                // the background, and a sync started from the UI and then immediately
+                // backgrounded -- tap Sync or Retry, swipe home -- can land exactly there.
+                // Uncaught it reaches the default handler installed in onCreate and takes
+                // the app down with a crash report. The run itself lives on
+                // applicationScope and continues either way; what is lost is the service
+                // keeping the process alive, which is strictly better than a crash.
+                val started = runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        appContext.startForegroundService(intent)
+                    } else {
+                        appContext.startService(intent)
+                    }
+                }.onFailure {
+                    Log.e(TAG, "startService: could not start the download service", it)
+                    // Rolled back so a later sync, started while in the foreground, is not
+                    // locked out by a flag claiming a service that never started.
+                    isServiceRunning.set(false)
+                }.isSuccess
+
+                if (started) appContext.bindService(intent, connection, BIND_AUTO_CREATE)
             }
         }
 

@@ -36,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -175,6 +179,23 @@ fun SettingsPage(
     }
     var showIntervalDialog by remember { mutableStateOf(false) }
 
+    // Read into state rather than straight from MMKV inside the note below. MMKV is not a
+    // snapshot source, so a direct read never recomposes -- and this preference is changed
+    // from the metered-network dialog on another screen, which would leave the note saying
+    // "Wi-Fi only" after the schedule had already been rebuilt for any network. Refreshed
+    // on resume, the same way the API key row above is.
+    var cellularAllowed by remember { mutableStateOf(CELLULAR_DOWNLOAD.getBoolean()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                cellularAllowed = CELLULAR_DOWNLOAD.getBoolean()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val dirLauncher =
         rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
             override fun createIntent(context: Context, input: Uri?): Intent {
@@ -296,7 +317,7 @@ fun SettingsPage(
             item {
                 PreferenceInfoNote(
                     text = stringResource(
-                        if (CELLULAR_DOWNLOAD.getBoolean()) R.string.auto_sync_note_any_network
+                        if (cellularAllowed) R.string.auto_sync_note_any_network
                         else R.string.auto_sync_note_unmetered
                     )
                 )

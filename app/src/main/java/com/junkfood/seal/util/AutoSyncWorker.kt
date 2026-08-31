@@ -81,15 +81,30 @@ class AutoSyncWorker(
         // from starting on Android 12+. So the worker becomes the foreground host for the
         // run, and [App.isWorkerForeground] tells Downloader to stand down.
         //
-        // Best-effort: setForeground can still be refused (notifications denied, or an
-        // unusual restriction), and that is not a reason to skip the sync -- it only means
-        // the run proceeds without the elevated slot, exactly as it would have before.
+        // The flag is set BEFORE the promotion is attempted, and stays set either way.
+        //
+        // It is not a record of whether the promotion succeeded -- it is what stops
+        // Downloader from binding the foreground service on this run, and that has to hold
+        // whether or not the worker got its slot. Setting it from the promotion's result
+        // (as an earlier version did) meant a refused setForeground left the flag false,
+        // Downloader then called startForegroundService from a WorkManager-woken
+        // background process, and the run died on the very
+        // ForegroundServiceStartNotAllowedException the flag exists to prevent.
+        App.isWorkerForeground.set(true)
+
+        // Best-effort. setForeground can be refused (notifications denied, a restricted
+        // app-standby bucket, quota exhausted), and that is not a reason to skip the sync:
+        // the run proceeds as an ordinary background worker, subject to the platform's
+        // execution window, which the timeout on the wait below is sized against.
         val wentForeground = runCatching { setForeground(makeForegroundInfo()) }
             .onFailure { Log.w(TAG, "doWork: could not go foreground, continuing anyway", it) }
             .isSuccess
 
-        Log.d(TAG, "doWork: starting scheduled sync of ${playlists.size} playlist(s)")
-        App.isWorkerForeground.set(wentForeground)
+        Log.d(
+            TAG,
+            "doWork: starting scheduled sync of ${playlists.size} playlist(s), " +
+                    "foreground=$wentForeground"
+        )
         try {
             runSync(playlists)
         } finally {
@@ -121,7 +136,20 @@ class AutoSyncWorker(
             Log.w(TAG, "runSync: sync never started, nothing to wait for")
             return
         }
-        Downloader.downloaderState.first { it is Downloader.State.Idle }
+
+        // Bounded, unlike the start wait's smaller timeout, because the thing being waited
+        // on is a whole sync. A wedged yt-dlp process (a stalled socket read holds its
+        // thread inside downloadVideo, so finishProcessing never runs) would otherwise
+        // suspend this worker forever while its ongoing notification sat on the user's
+        // screen. The ceiling is generous enough that a genuinely large first sync is not
+        // cut short, and the run itself is not cancelled when it expires -- it continues
+        // on applicationScope; this only stops the worker from waiting on it.
+        val finished = withTimeoutOrNull(SYNC_COMPLETION_TIMEOUT_MS) {
+            Downloader.downloaderState.first { it is Downloader.State.Idle }
+        }
+        if (finished == null) {
+            Log.w(TAG, "runSync: sync still running after the wait ceiling, leaving it to run")
+        }
     }
 
     /**
@@ -157,6 +185,14 @@ class AutoSyncWorker(
 
         /** How long to wait for a sync to actually begin before concluding it was rejected. */
         private const val SYNC_START_TIMEOUT_MS = 10_000L
+
+        /**
+         * How long to wait for a started sync to finish before the worker stops waiting.
+         *
+         * Two hours: comfortably longer than any real library's first full sync, and short
+         * enough that a wedged run cannot hold the worker (and its notification) forever.
+         */
+        private const val SYNC_COMPLETION_TIMEOUT_MS = 2 * 60 * 60 * 1000L
 
         /**
          * Applies the current auto-sync preferences to WorkManager.
@@ -216,27 +252,31 @@ class AutoSyncWorker(
                 .build()
 
             Log.d(TAG, "reschedule: every ${hours}h, charging=${AUTO_SYNC_REQUIRES_CHARGING.getBoolean()}")
-            // KEEP, not UPDATE. UPDATE would rewrite the request on every app start; even
-            // with an identical spec that is a needless write, and the moment the spec does
-            // differ it also restarts the period. So the schedule is torn down and rebuilt
-            // explicitly when the settings that shape it change, and left strictly alone
-            // otherwise -- which is what makes calling this from App.onCreate() safe.
+            // UPDATE, so this one method serves both callers.
+            //
+            // It rewrites an enqueued schedule in place when the spec has changed and is
+            // otherwise inert, which is exactly what App.onCreate() wants: the constraints
+            // are derived from preferences that can change while no scheduling code runs,
+            // and a start that finds them unchanged should do nothing. KEEP would discard
+            // the new request wholesale and make that call permanently dead.
+            //
+            // Safe against the hazard that argued for KEEP -- an initial delay being
+            // reapplied on every launch and pushing the next run past its interval forever
+            // -- because the request deliberately carries no initial delay at all.
             workManager.enqueueUniquePeriodicWork(
-                WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request
+                WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request
             )
         }
 
         /**
-         * Rebuilds the schedule from scratch, for when the user changes what it should be.
+         * Applies a settings change to the schedule.
          *
-         * [reschedule] deliberately keeps an existing schedule untouched, which is right on
-         * app start and wrong here: a new interval or a new constraint has to replace the
-         * enqueued work, not defer to it. Cancelling first is what makes the following
-         * KEEP-policy enqueue behave as a replacement.
+         * The same call as [reschedule]: UPDATE already replaces a changed spec in place,
+         * so nothing extra is needed. Kept as its own name because the call sites read
+         * better for it, and because cancelling first -- which an earlier version did --
+         * was both unnecessary and subtly wrong: `cancelUniqueWork` completes
+         * asynchronously, so the enqueue that followed it could race the cancel.
          */
-        fun applySettingsChange(context: Context) {
-            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
-            reschedule(context)
-        }
+        fun applySettingsChange(context: Context) = reschedule(context)
     }
 }
