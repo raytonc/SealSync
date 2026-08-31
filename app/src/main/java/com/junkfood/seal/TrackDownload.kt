@@ -31,9 +31,9 @@ data class TrackDownload(
          * Its own status rather than a flag on [Downloading]: a row in this state is not
          * making progress, so rendering it with a progress ring frozen at whatever
          * fraction it died at reads as a stalled download. [attempt] is the attempt that
-         * just failed, 1-based, and [reason] is why -- both worth showing, since a run
-         * that quietly retried three times and then succeeded should still be able to say
-         * that it did.
+         * just failed, 1-based and counting every earlier run's attempts on this item too,
+         * and [reason] is why -- both worth showing, since a run that quietly retried
+         * three times and then succeeded should still be able to say that it did.
          */
         data class Retrying(val attempt: Int, val reason: String) : Status
 
@@ -42,7 +42,11 @@ data class TrackDownload(
         /**
          * [reason] is the throwable's message, shown on the row and copyable. [attempts]
          * is how many times the item was tried, so a row can distinguish a video that is
-         * simply unavailable from one the network never managed to fetch.
+         * simply unavailable from one the network never managed to fetch. It accumulates
+         * across user-driven retries rather than restarting: a dead video tapped five
+         * times has been tried fifteen times, and a row still claiming three would render
+         * it identically to one that has only ever been tried once -- which is the
+         * distinction this field exists to draw.
          */
         data class Failed(val reason: String, val attempts: Int = 1) : Status
 

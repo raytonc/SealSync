@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name" translatable="false">SealSync</string>
+    <!-- Justification for the specialUse foreground service type, read by Play review. -->
+    <string name="fgs_special_use_subtype" translatable="false">Downloading and syncing saved YouTube playlists to local audio files, which continues while the app is in the background.</string>
     <string name="sync_complete">Sync complete</string>
     <string name="sync_no_playlists">No playlists to sync</string>
     <string name="sync_no_api_key">YouTube API key not configured. Please add one in Settings.</string>
@@ -100,9 +102,17 @@
     <string name="auto_sync_every_3d">Every 3 days</string>
     <string name="auto_sync_charging">Only while charging</string>
     <string name="auto_sync_charging_desc">Wait for the charger before starting a scheduled sync</string>
-    <string name="auto_sync_note_unmetered">Scheduled syncs run on Wi-Fi only and wait for the battery to be above low. Turn on cellular downloads to allow mobile data. Android decides the exact timing, so a run may start later than the interval.</string>
+    <string name="cellular_download">Allow mobile data</string>
+    <string name="cellular_download_desc">Let syncs and retries use metered connections instead of waiting for Wi-Fi</string>
+    <string name="auto_sync_note_unmetered">Scheduled syncs run on Wi-Fi only and wait for the battery to be above low. Android decides the exact timing, so a run may start later than the interval.</string>
     <string name="auto_sync_note_any_network">Scheduled syncs may use mobile data, and wait for the battery to be above low. Android decides the exact timing, so a run may start later than the interval.</string>
     <string name="queue_status_retrying">Attempt %1$d failed, retrying — %2$s</string>
+    <!-- Shown on a failed row that was tried more than once, so a video that is simply
+         unavailable reads differently from one the network never managed to fetch. -->
+    <plurals name="queue_status_failed_attempts">
+        <item quantity="one">%1$s</item>
+        <item quantity="other">%1$s (after %2$d attempts)</item>
+    </plurals>
     <string name="queue_retry_failed">Retry</string>
     <plurals name="queue_retrying_count">
         <item quantity="one">%1$d retrying</item>

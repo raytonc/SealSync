@@ -39,6 +39,7 @@ import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,8 +69,25 @@ class App : Application(), ImageLoaderFactory {
                 YoutubeDL.init(this@App)
                 FFmpeg.init(this@App)
                 Aria2c.init(this@App)
+                // Signalled the moment the binaries are usable, and before
+                // deleteOutdatedApk, which is housekeeping no download depends on.
+                binariesReady.complete(Unit)
                 UpdateUtil.deleteOutdatedApk()
             } catch (th: Throwable) {
+                // Completed exceptionally rather than left hanging. A failed init means
+                // yt-dlp cannot run at all, so a waiter must not be released normally --
+                // it would only go on to fail every item. But it does have to be released:
+                // an uncompleted deferred makes every waiter sit out its own timeout and
+                // then guess, and AutoSyncWorker's guess was "retry later", which
+                // WorkManager honours by re-running the worker forever. Each of those runs
+                // burns a foreground slot and a minute of ongoing notification on a
+                // process whose binaries will never work.
+                //
+                // The distinction matters because the crash report is not the whole story
+                // on this path. It launches once per process, and a WorkManager-woken cold
+                // start has no UI in front of it -- so on those the exception here is the
+                // only signal anything went wrong.
+                binariesReady.completeExceptionally(th)
                 withContext(Dispatchers.Main) {
                     startCrashReportActivity(th)
                 }
@@ -98,7 +116,13 @@ class App : Application(), ImageLoaderFactory {
         // keeps it alive -- it is what keeps it *correct*: the constraints are derived from
         // preferences that can change while no scheduling code runs, and the enqueue uses
         // UPDATE, so an unchanged request is inert and a changed one is rewritten in place.
-        AutoSyncWorker.reschedule(this)
+        //
+        // Off the main thread, and guarded: getInstance opens the WorkDatabase and enqueue
+        // writes to disk, which is tens of milliseconds of blocked startup on a low-end
+        // device -- every launch, usually to reapply a schedule that has not changed.
+        // Nothing here waits on it, and it needs only the preferences MMKV has already
+        // loaded. [AutoSyncWorker.applySettingsChange] does both for us.
+        AutoSyncWorker.applySettingsChange(this)
 
 
         Thread.setDefaultUncaughtExceptionHandler { _, e ->
@@ -148,6 +172,30 @@ class App : Application(), ImageLoaderFactory {
          * plain `var` let two callers both observe `false` and each bind, which leaks a
          * binding the single [stopService] can never undo.
          */
+        /**
+         * Completes once yt-dlp, FFmpeg and aria2c have finished unpacking.
+         *
+         * [YoutubeDL.init] and friends run asynchronously in [onCreate] -- they unpack
+         * binaries and take seconds on a first run after an update -- while a download
+         * calls straight into `YoutubeDL.getInstance().execute`. Started from the UI that
+         * race barely exists: a person has to reach the button, by which time the unpack
+         * is long done. A scheduled sync has no such gap. WorkManager wakes a cold process
+         * and the worker starts within milliseconds of `onCreate`, so every item would hit
+         * a half-unpacked yt-dlp, fail with an error no retry pattern recognises, and
+         * settle as permanently Failed on its first attempt.
+         *
+         * A [CompletableDeferred] rather than a boolean, so a caller can *wait* for it
+         * instead of giving up: the worker has a foreground slot and minutes of runway,
+         * and the right answer to "not ready yet" is a few seconds' patience.
+         *
+         * Completes exceptionally if the init throws, so `await()` distinguishes the three
+         * states a caller actually needs to tell apart: ready, still unpacking (the call
+         * suspends), and will never be ready (it throws). That last one is permanent for
+         * the life of the process, and a caller that can reschedule itself -- the worker --
+         * must not treat it as "try again in a while".
+         */
+        val binariesReady = CompletableDeferred<Unit>()
+
         private val isServiceRunning = AtomicBoolean(false)
         var downloadService: DownloadService? = null
             private set

@@ -307,11 +307,33 @@ object Downloader {
     val activeTitles: StateFlow<List<String>> = mutableQueue
         .map { tracks ->
             tracks.values.mapNotNull { track ->
-                track.title.takeIf { track.status is TrackDownload.Status.Downloading }
+                // Retrying counts as active, the same way the queue screen groups it.
+                // A brief network drop puts every in-flight item into a backoff at once,
+                // and filtering on Downloading alone emptied this list for the duration --
+                // so the home card showed a sync in progress with no titles under it and a
+                // bar that did not move, which reads as a stalled download. That is the
+                // exact impression the Retrying status was introduced to prevent.
+                track.title.takeIf {
+                    track.status is TrackDownload.Status.Downloading ||
+                            track.status is TrackDownload.Status.Retrying
+                }
             }
         }
         .distinctUntilChanged()
         .stateIn(applicationScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * The download settings every sync-driven download runs under.
+     *
+     * One definition for the full sync's step 6 and the failed-item retry both. They held
+     * identical literals, which is a drift waiting to happen: the moment either of these
+     * becomes user-configurable, whichever call site is forgotten starts producing files
+     * that differ from their neighbours with nothing on screen to explain why.
+     */
+    private fun syncDownloadPreferences() = DownloadUtil.DownloadPreferences(
+        embedMetadata = true,
+        cropArtwork = true,
+    )
 
     private fun Collection<TrackDownload>.toSummary(): QueueSummary {
         if (isEmpty()) return QueueSummary()
@@ -398,6 +420,25 @@ object Downloader {
     }
 
     /**
+     * Re-runs the binding decision for the run that is going right now, if any.
+     *
+     * The state collector above binds on the transition out of Idle, and that is normally
+     * the only moment the question needs asking. [App.isWorkerForeground] introduces one
+     * exception: a scheduled worker raises it just before trying to claim the downloader,
+     * so a manual sync that wins the claim in that instant is told, correctly at the time,
+     * that a worker is hosting the foreground -- and its startService() returns having
+     * done nothing. When the worker then loses the claim and lowers the flag, that answer
+     * has gone stale, and the transition that would have re-asked has already happened.
+     * This is the worker saying: I am not hosting after all, look again.
+     *
+     * Idempotent -- startService is a no-op when the service is already bound -- so the
+     * common case, where the worker won its claim, costs a flag read.
+     */
+    fun rebindServiceIfRunning() {
+        if (downloaderState.value !is State.Idle) startService()
+    }
+
+    /**
      * Takes the downloader for a new run, atomically, or reports that something else has it.
      *
      * This used to be a plain `isDownloaderAvailable()` read followed several statements
@@ -420,7 +461,39 @@ object Downloader {
         return true
     }
 
-    fun updateState(state: State) = mutableDownloaderState.update { state }
+    private fun updateState(state: State) = mutableDownloaderState.update { state }
+
+    /**
+     * Takes the downloader for a yt-dlp update, or reports that something else has it.
+     *
+     * The update path needs the same claim a sync does, and for the same reason. It used
+     * to read the state and then write [State.Updating] unconditionally a few statements
+     * later, from a Compose `LaunchedEffect` whose snapshot of the state could be a frame
+     * stale to begin with. A scheduled sync claiming in that window was simply overwritten:
+     * its [State.DownloadingPlaylist] vanished, so every in-flight `downloadWithRetries`
+     * saw a state that was no longer DownloadingPlaylist and settled its item as Skipped,
+     * progress updates became no-ops, and the worker's wait for Idle never matched
+     * `Updating` -- it hung until its ceiling while the run wrote files underneath it.
+     *
+     * Silent, unlike a sync's claim: nobody asked for this. It is a background freshness
+     * check, and losing the claim means the downloader is busy doing something the user
+     * does care about, which is not an occasion for a toast.
+     */
+    fun claimForUpdate(): Boolean = claimDownloader(State.Updating, silent = true)
+
+    /**
+     * Gives the downloader back after [claimForUpdate].
+     *
+     * Conditional on still holding it. A bare write to Idle here would do to a sync
+     * exactly what the old update path did -- forcing Idle underneath a run that claimed
+     * the downloader legitimately, tearing down its foreground service mid-download --
+     * only from the release side instead of the acquire side.
+     */
+    fun releaseUpdate() {
+        if (!mutableDownloaderState.compareAndSet(State.Updating, State.Idle)) {
+            Log.w(TAG, "releaseUpdate: state moved on from Updating, leaving it alone")
+        }
+    }
 
     /**
      * Moves the run to its next step, if it is still running, and says so on the ongoing
@@ -451,8 +524,14 @@ object Downloader {
      * work they did not ask for right now -- is how a background feature makes itself
      * unwelcome. The ongoing notification is the right channel for a run nobody started
      * by hand, and it carries the same information.
+     *
+     * Returns whether this call actually started a run. A caller that needs to wait for
+     * the run -- [com.junkfood.seal.util.AutoSyncWorker] does -- must not wait unless it
+     * owns one: the downloader state it would watch is global, so a rejected caller that
+     * waited anyway would be tracking somebody else's sync. Callers that only fire the
+     * sync off -- the UI's buttons -- can ignore it; the toasts already tell the user.
      */
-    fun syncPlaylists(playlists: List<PlaylistEntry>, silent: Boolean = false) {
+    fun syncPlaylists(playlists: List<PlaylistEntry>, silent: Boolean = false): Boolean {
         // These three rejections are toast-worthy for a tap and never for a scheduled run.
         // The worker checks all three itself before calling, but those checks are a
         // check-then-act: a playlist can be deleted, or a manual sync can start, in the
@@ -462,19 +541,19 @@ object Downloader {
         // failing them should not disturb a run that is already going.
         if (playlists.isEmpty()) {
             if (!silent) ToastUtil.showToast(context.getString(R.string.sync_no_playlists))
-            return
+            return false
         }
 
         val apiKey = YOUTUBE_API_KEY.getString()
         if (apiKey.isBlank()) {
             if (!silent) ToastUtil.showToast(context.getString(R.string.sync_no_api_key))
-            return
+            return false
         }
 
         // Claim the downloader before touching any shared state. Everything below this
         // line mutates state a concurrent run would also be using, so it must not run
         // until this call has established that there is no concurrent run.
-        if (!claimDownloader(State.DownloadingPlaylist(), silent)) return
+        if (!claimDownloader(State.DownloadingPlaylist(), silent)) return false
 
         Log.d(TAG, "syncPlaylists: starting sync for ${playlists.size} playlists")
         // Drop the previous run's error and summary now that a new one is starting.
@@ -501,10 +580,7 @@ object Downloader {
             var abortReason: String? = null
 
             try {
-                val preferences = DownloadUtil.DownloadPreferences(
-                    embedMetadata = true,
-                    cropArtwork = true
-                )
+                val preferences = syncDownloadPreferences()
 
                 // Step 1: enumerate every video across every playlist. The metadata refresh
                 // only feeds the library UI and nothing below depends on it, so it runs
@@ -692,6 +768,10 @@ object Downloader {
                 )
             }
         }
+
+        // The claim above succeeded and the run is launched. Not a claim that it has
+        // finished -- it has only just started, on applicationScope.
+        return true
     }
 
     /**
@@ -711,25 +791,47 @@ object Downloader {
      * as failures are cleared and keeps whatever is still broken.
      */
     fun retryFailedDownloads() {
-        // Claimed before the queue is even read, unlike syncPlaylists, which can do its
-        // cheap checks first. Here the check itself reads shared state: a snapshot taken
-        // before the claim could be emptied by a sync starting in between, and this run
-        // would then retry rows that no longer exist.
+        // Cheap check first, before the claim, the same way syncPlaylists rejects an empty
+        // playlist list before taking the downloader. Claiming first meant a tap with
+        // nothing to retry -- the button's `enabled` gate reads a StateFlow snapshot that
+        // can be one frame stale -- moved the state off Idle and straight back, which
+        // Downloader's collector answers by starting and binding the foreground service
+        // and then tearing it down milliseconds later, posting and cancelling an ongoing
+        // notification for work that never existed. On Android 12+ that startForegroundService
+        // can also throw outright if the app happens to be backgrounded in that instant.
         //
+        // Racy in the harmless direction: a sync starting between here and the claim wins
+        // the claim, and this call is rejected below without having touched anything.
+        if (mutableQueue.value.values.none { it.status is TrackDownload.Status.Failed }) {
+            ToastUtil.showToast(context.getString(R.string.retry_nothing_to_retry))
+            return
+        }
+
         // The itemCount is filled in below once the snapshot is known; what matters at
         // this point is only that the transition out of Idle has been won.
         if (!claimDownloader(State.DownloadingPlaylist(phase = Phase.Downloading))) return
 
-        // Safe now: nothing else can be mutating the queue behind this.
+        // Re-read under the claim, which is what actually makes the snapshot safe: nothing
+        // else can be mutating the queue behind this. The check above is only an
+        // optimisation, and the list it saw may already be gone.
         val failed = mutableQueue.value.values
             .filter { it.status is TrackDownload.Status.Failed }
         if (failed.isEmpty()) {
-            // Nothing to do after all, so give the downloader straight back. Without this
-            // the claim would strand the state in DownloadingPlaylist with no run behind
-            // it, and every later sync would be rejected until the process died.
+            // A sync claimed and cleared the queue between the check and here. Give the
+            // downloader straight back -- without this the claim would strand the state in
+            // DownloadingPlaylist with no run behind it, and every later sync would be
+            // rejected until the process died.
             updateState(State.Idle)
             ToastUtil.showToast(context.getString(R.string.retry_nothing_to_retry))
             return
+        }
+
+        // Captured before the rows are reset to Queued, which erases the counts. Carried
+        // into the run so a retried item's tally continues from where the last one left
+        // off rather than restarting at one -- five taps of Retry on a genuinely dead
+        // video should not keep reporting the same three attempts.
+        val priorAttempts = failed.associate { track ->
+            track.videoId to ((track.status as? TrackDownload.Status.Failed)?.attempts ?: 0)
         }
 
         Log.d(TAG, "retryFailedDownloads: retrying ${failed.size} item(s)")
@@ -757,14 +859,12 @@ object Downloader {
             var abortReason: String? = null
 
             try {
-                val preferences = DownloadUtil.DownloadPreferences(
-                    embedMetadata = true,
-                    cropArtwork = true
-                )
-                // Same runner as a full sync's download step, so the two cannot drift.
+                // Same runner and the same settings as a full sync's download step, so
+                // the two cannot drift.
                 val outcome = runDownloads(
                     items = failed.associate { it.videoId to it.title },
-                    preferences = preferences,
+                    preferences = syncDownloadPreferences(),
+                    priorAttempts = priorAttempts,
                 )
                 downloaded = outcome.downloaded
                 failedItems = outcome.failed
@@ -975,6 +1075,15 @@ object Downloader {
     private data class DownloadOutcome(val downloaded: Int, val failed: Int)
 
     /**
+     * How one item ended.
+     *
+     * [Skipped] is deliberately not a kind of failure: it means the run was cancelled
+     * before the item ever got a download slot, which is the user's doing and does not
+     * belong in the failed tally, the error banner, or the retry queue.
+     */
+    private enum class ItemOutcome { Downloaded, Failed, Skipped }
+
+    /**
      * Downloads [items] (videoId -> title), [MAX_CONCURRENT_DOWNLOADS] at a time, and
      * returns once every one of them has settled.
      *
@@ -988,10 +1097,16 @@ object Downloader {
      * exactly that; the semaphore is what actually caps how many run. `coroutineScope`
      * makes this the join point, so a caller's `finally` cannot report the run as over
      * while downloads are still writing files.
+     *
+     * Every item is launched immediately and then waits its turn for a slot, so this
+     * function does no cancellation checking itself: at the point the coroutines start,
+     * nothing has been cancelled yet. [downloadWithRetries] checks once it holds a permit,
+     * which is the moment an item would otherwise begin transferring.
      */
     private suspend fun runDownloads(
         items: Map<String, String>,
         preferences: DownloadUtil.DownloadPreferences,
+        priorAttempts: Map<String, Int> = emptyMap(),
     ): DownloadOutcome {
         val total = items.size
         // Downloads finish on several coroutines at once, so the tallies are atomic rather
@@ -1005,31 +1120,30 @@ object Downloader {
         coroutineScope {
             items.forEach { (videoId, title) ->
                 launch(Dispatchers.IO) {
-                    // Checked before taking any slot: a cancellation during the run should
-                    // stop everything still queued behind it. Returning from this child
-                    // leaves the others alone -- the ones already downloading finish, and
-                    // their files are kept.
-                    if (downloaderState.value !is State.DownloadingPlaylist) {
-                        Log.d(TAG, "runDownloads: cancelled, skipping $videoId")
-                        // Marked rather than dropped, so the queue screen says the run was
-                        // cut short instead of leaving rows that look like they are still
-                        // waiting their turn.
-                        updateTrack(videoId) { it.copy(status = TrackDownload.Status.Skipped) }
-                        return@launch
-                    }
-
-                    val position = startedItems.incrementAndGet()
-                    Log.d(TAG, "runDownloads: [$position/$total] $videoId")
-
-                    if (downloadWithRetries(videoId, title, preferences, semaphore)) {
-                        downloaded.incrementAndGet()
-                    } else {
-                        failed.incrementAndGet()
+                    val outcome = downloadWithRetries(
+                        videoId, title, preferences, semaphore, total, startedItems,
+                        priorAttempts[videoId] ?: 0,
+                    )
+                    when (outcome) {
+                        ItemOutcome.Downloaded -> downloaded.incrementAndGet()
+                        ItemOutcome.Failed -> failed.incrementAndGet()
+                        // Never ran, so it is neither a success nor a failure. Counting a
+                        // cancelled item as failed would put the run's own cancellation in
+                        // the failure tally and light up the error banner for it.
+                        //
+                        // It is still *settled*, though, so it falls through to the
+                        // progress update below. Returning early here left the ongoing
+                        // notification frozen at whatever it read when the run was
+                        // cancelled -- "Synced 5 of 20", bar at a quarter -- while
+                        // toSummary counts a Skipped item as a completed unit and drove
+                        // the queue screen's bar to 100%. Two views of the same run
+                        // disagreeing about how far it got.
+                        ItemOutcome.Skipped -> Unit
                     }
 
                     // Counted on the way out, not on the way in: with several running at
                     // once, reporting "n of m" as each one *starts* jumps straight to 3
-                    // while nothing has actually landed. Finished items are what the
+                    // while nothing has actually landed. Settled items are what the
                     // number is claiming to mean.
                     val done = finishedItems.incrementAndGet()
                     mutableDownloaderState.update {
@@ -1063,21 +1177,32 @@ object Downloader {
     }
 
     /**
-     * Downloads one item, retrying transient failures up to [MAX_ATTEMPTS] times. Returns
-     * true if the item eventually landed.
+     * Downloads one item, retrying transient failures up to [MAX_ATTEMPTS] times, and
+     * reports how it ended.
      *
-     * Settles the item's queue row on every path -- Done, or Failed carrying the attempt
-     * count -- so the caller only has to tally the outcome. Between attempts the row goes
-     * to [TrackDownload.Status.Retrying] and the coroutine sleeps out a doubling backoff,
-     * which is also a cancellation point: a run cancelled while an item is waiting stops
-     * there instead of burning the rest of its attempts.
+     * Settles the item's queue row on every path -- Done, Failed carrying the attempt
+     * count, or Skipped -- so the caller only has to tally the outcome. Between attempts
+     * the row goes to [TrackDownload.Status.Retrying] and the coroutine sleeps out a
+     * doubling backoff, which is also a cancellation point: a run cancelled while an item
+     * is waiting stops there instead of burning the rest of its attempts.
+     *
+     * Takes a download slot from [semaphore] for each attempt and does its cancellation
+     * check while holding it, which is what lets a cancellation stop the items still
+     * queued behind the ones in flight.
+     *
+     * [priorAttempts] is how many times an earlier run already tried this item, so a
+     * user-driven retry reports a running total rather than restarting the count. It only
+     * shifts what the settled row *says*; this run still gets its full [MAX_ATTEMPTS].
      */
     private suspend fun downloadWithRetries(
         videoId: String,
         title: String,
         preferences: DownloadUtil.DownloadPreferences,
         semaphore: Semaphore,
-    ): Boolean {
+        total: Int,
+        startedItems: AtomicInteger,
+        priorAttempts: Int = 0,
+    ): ItemOutcome {
         var attempt = 1
         while (true) {
             // One permit per attempt, taken here and released before any backoff, rather
@@ -1092,28 +1217,91 @@ object Downloader {
             // cancellation and unwinding the whole run's accounting. Scoping the permit to
             // a single attempt removes the asymmetry instead of trying to balance it.
             val result = semaphore.withPermit {
+                // Cancellation is checked here, holding the permit, and not by the caller
+                // before it launches us.
+                //
+                // A run's items are all launched in one tight loop, so a check made out
+                // there runs for every item within milliseconds of the run starting --
+                // while only MAX_CONCURRENT_DOWNLOADS are actually downloading and the
+                // rest are parked in `acquire()`. It would pass for the whole run at once
+                // and stop nothing: a cancellation arriving a minute later would find no
+                // check between a waiting item and its download, and all of them would go
+                // on to transfer. Checking at the point the slot is granted is what makes
+                // cancelling actually stop the items still queued behind it.
+                if (downloaderState.value !is State.DownloadingPlaylist) {
+                    Log.d(TAG, "downloadWithRetries: cancelled, skipping $videoId")
+                    // Marked rather than dropped, so the queue screen says the run was cut
+                    // short instead of leaving rows that look like they are still waiting
+                    // their turn. On a retry attempt this replaces the Retrying row, which
+                    // is equally true: the item is not coming back either way.
+                    updateTrack(videoId) { it.copy(status = TrackDownload.Status.Skipped) }
+                    return ItemOutcome.Skipped
+                }
+
+                // Logged from inside the permit for the same reason: this is the moment the
+                // item actually starts, so "[n/total]" tracks real progress through the run
+                // instead of racing to total in the first milliseconds. Counted once per
+                // item, not once per attempt -- a retry is the same item having another go.
+                if (attempt == 1) {
+                    val position = startedItems.incrementAndGet()
+                    Log.d(TAG, "downloadWithRetries: [$position/$total] $videoId")
+                }
+
                 downloadVideo(videoId, title, preferences)
             }
             result.onSuccess {
                 updateTrack(videoId) { it.copy(status = TrackDownload.Status.Done) }
-                return true
+                return ItemOutcome.Downloaded
             }
             val th = result.exceptionOrNull() ?: IllegalStateException("unknown failure")
 
-            // Out of attempts, not worth retrying, or the run is over: settle as failed.
-            // The state check matters as much as the other two -- without it a cancelled
-            // run would keep re-attempting its in-flight items through their full backoff.
-            val giveUp = attempt >= MAX_ATTEMPTS ||
-                    !th.isTransient() ||
-                    downloaderState.value !is State.DownloadingPlaylist
+            // yt-dlp itself reporting that it was stopped. Not a failure on the item's own
+            // merits under any reading, and not something the give-up test below should
+            // ever see -- it is non-transient, so it would settle as Failed.
+            if (th is YoutubeDL.CanceledException) {
+                Log.d(TAG, "downloadWithRetries: yt-dlp cancelled, skipping $videoId")
+                updateTrack(videoId) { it.copy(status = TrackDownload.Status.Skipped) }
+                return ItemOutcome.Skipped
+            }
+
+            // Out of attempts, or not worth retrying: settle as failed.
+            //
+            // Tested before the cancellation check below, deliberately. A permanent
+            // failure -- a deleted or private video -- failed on its own merits and is
+            // worth recording whether or not the user happened to cancel in the same
+            // instant; the two are distinguishable precisely because `isTransient` is
+            // false here. Checking cancellation first discarded that: the row became
+            // Skipped, retainFailedTracks dropped it, and the user was left with no
+            // record at all of why the item did not arrive.
+            val giveUp = !th.isTransient() || attempt >= MAX_ATTEMPTS
             if (giveUp) {
+                // Reported as cancelled only when the item ran out of *attempts* during a
+                // cancellation -- there the failure genuinely is the run being stopped.
+                if (th.isTransient() && downloaderState.value !is State.DownloadingPlaylist) {
+                    Log.d(TAG, "downloadWithRetries: cancelled mid-attempt, skipping $videoId")
+                    updateTrack(videoId) { it.copy(status = TrackDownload.Status.Skipped) }
+                    return ItemOutcome.Skipped
+                }
                 updateTrack(videoId) {
                     it.copy(
-                        status = TrackDownload.Status.Failed(th.toReason(), attempts = attempt)
+                        status = TrackDownload.Status.Failed(
+                            th.toReason(), attempts = priorAttempts + attempt
+                        )
                     )
                 }
                 reportItemError(th, videoId)
-                return false
+                return ItemOutcome.Failed
+            }
+
+            // Transient and attempts left, but the run is over: nothing to retry into.
+            // Skipped rather than failed -- the download did not fail on its own merits,
+            // and settling it as Failed would leave a phantom failure that the error
+            // banner counts and the Retry button re-downloads, for something the user
+            // chose to stop.
+            if (downloaderState.value !is State.DownloadingPlaylist) {
+                Log.d(TAG, "downloadWithRetries: cancelled mid-attempt, skipping $videoId")
+                updateTrack(videoId) { it.copy(status = TrackDownload.Status.Skipped) }
+                return ItemOutcome.Skipped
             }
 
             val backoff = RETRY_BACKOFF_MS shl (attempt - 1)
@@ -1125,7 +1313,10 @@ object Downloader {
             updateTrack(videoId) {
                 it.copy(
                     status = TrackDownload.Status.Retrying(
-                        attempt = attempt, reason = th.toReason()
+                        // The running total, matching what the Failed row will say if this
+                        // item ends up settling there -- a row that reports "attempt 2"
+                        // and then "after 5 attempts" is just confusing.
+                        attempt = priorAttempts + attempt, reason = th.toReason()
                     )
                 )
             }

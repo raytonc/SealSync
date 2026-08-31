@@ -59,11 +59,21 @@
             android:exported="false"
             android:label="CrashReportActivity"
             android:theme="@style/Theme.SealSync" />
+        <!--
+            The subtype property is mandatory alongside specialUse from API 34: a service
+            declaring the catch-all type has to say, in one line the Play review reads,
+            what it is actually for. Omitting it is a lint error and a submission
+            rejection, not a runtime one, so it stays invisible until release day.
+        -->
         <service
             android:name=".DownloadService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="@string/fgs_special_use_subtype" />
+        </service>
 
         <activity
             android:name=".MainActivity"
@@ -91,7 +101,12 @@
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="specialUse"
-            tools:node="merge" />
+            tools:node="merge">
+            <!-- Required alongside specialUse from API 34; see DownloadService above. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="@string/fgs_special_use_subtype" />
+        </service>
 
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"

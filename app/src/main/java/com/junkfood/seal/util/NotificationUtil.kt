@@ -138,11 +138,18 @@ object NotificationUtil {
         // supports 21, so the older boolean form is what those builds get -- `true` there
         // means exactly what STOP_FOREGROUND_REMOVE means here.
         //
-        // Null for a scheduled sync, which binds no service: there the worker holds this
-        // same notification id as its own ForegroundInfo, and only WorkManager can release
-        // that slot -- AutoSyncWorker does it by returning, immediately after the wait that
-        // this call ends. The cancel() below is still right in both cases; it is simply not
-        // sufficient on its own for the service-hosted one.
+        // Null for a scheduled sync, which binds no service. There the worker holds this
+        // same notification id as its own ForegroundInfo and only WorkManager can release
+        // that slot, so the cancel() below may be a no-op on that path: it runs before the
+        // worker's wait on the Idle state has resumed, and the promoted notification
+        // outlives a bare cancel. Which is not a leak -- WorkManager tears its own
+        // foreground notification down as the worker completes, moments later. The cancel
+        // is still right to attempt in both cases: it is what removes the notification
+        // when setForeground was refused and no slot was ever held, and it is merely
+        // insufficient, never harmful, when one was.
+        //
+        // The completion summary below is unaffected either way: it goes out on
+        // COMPLETION_NOTIFICATION_ID, deliberately not the id under contention.
         App.downloadService?.let { service ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 service.stopForeground(Service.STOP_FOREGROUND_REMOVE)

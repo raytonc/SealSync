@@ -3,6 +3,7 @@ package com.junkfood.seal.util
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -18,7 +19,9 @@ import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.getInt
 import com.junkfood.seal.util.PreferenceUtil.getString
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
 
@@ -43,6 +46,10 @@ class AutoSyncWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // The platform's execution window opens here, so this is what the wait ceiling in
+        // [runSync] is measured against -- everything before it spends the same budget.
+        val startedAt = SystemClock.elapsedRealtime()
+
         // Re-checked here, not just at schedule time. Work already enqueued survives the
         // preference being turned off if the cancel below ever fails to land, and a run
         // the user has switched off must not go ahead on the strength of a stale schedule.
@@ -51,14 +58,13 @@ class AutoSyncWorker(
             return Result.success()
         }
 
-        // A manual sync already running is not a reason to fail: syncPlaylists would reject
-        // this one anyway (and toast about it), and the folder is being brought current by
-        // the run that is already going. Retrying would just collide with it again.
-        if (Downloader.downloaderState.value !is Downloader.State.Idle) {
-            Log.d(TAG, "doWork: a sync is already running, skipping this one")
-            return Result.success()
-        }
-
+        // Whether something else holds the downloader is deliberately NOT checked here.
+        //
+        // A check at this point is a check-then-act: a manual sync can start in the window
+        // between it and syncPlaylists, and this worker would then have already committed
+        // to running. syncPlaylists claims the downloader atomically and tells us whether
+        // it got it, so that answer -- taken below, after the foreground slot is set up --
+        // is the only one that cannot be stale by the time it is used.
         val playlists = DatabaseUtil.getPlaylistsFlow().first()
         if (playlists.isEmpty()) {
             Log.d(TAG, "doWork: no playlists saved, nothing to sync")
@@ -81,74 +87,199 @@ class AutoSyncWorker(
         // from starting on Android 12+. So the worker becomes the foreground host for the
         // run, and [App.isWorkerForeground] tells Downloader to stand down.
         //
-        // The flag is set BEFORE the promotion is attempted, and stays set either way.
-        //
-        // It is not a record of whether the promotion succeeded -- it is what stops
-        // Downloader from binding the foreground service on this run, and that has to hold
-        // whether or not the worker got its slot. Setting it from the promotion's result
-        // (as an earlier version did) meant a refused setForeground left the flag false,
-        // Downloader then called startForegroundService from a WorkManager-woken
-        // background process, and the run died on the very
-        // ForegroundServiceStartNotAllowedException the flag exists to prevent.
-        App.isWorkerForeground.set(true)
-
         // Best-effort. setForeground can be refused (notifications denied, a restricted
         // app-standby bucket, quota exhausted), and that is not a reason to skip the sync:
         // the run proceeds as an ordinary background worker, subject to the platform's
         // execution window, which the timeout on the wait below is sized against.
+        //
+        // Note the ordering against [App.isWorkerForeground], which is deliberately NOT
+        // set here: see [runSync], which sets it only once the claim is won.
+        //
+        // Promoted before the binary wait below, not after. That wait can run for a full
+        // minute on a slow first-run unpack, and doing it as a plain background worker
+        // spends it under exactly the Doze and standby pressure the promotion exists to
+        // escape -- the conditions most likely to have the platform stop the worker
+        // mid-wait, and on the one run (first after an update) where that unpack is
+        // slowest.
         val wentForeground = runCatching { setForeground(makeForegroundInfo()) }
             .onFailure { Log.w(TAG, "doWork: could not go foreground, continuing anyway", it) }
             .isSuccess
+
+        // Wait for yt-dlp to finish unpacking before anything tries to run it.
+        //
+        // This worker is the one caller that routinely starts from a cold process:
+        // WorkManager wakes the app and `doWork` begins within milliseconds of
+        // `App.onCreate`, which kicks the binary unpack off asynchronously and does not
+        // wait for it. Without this, a first run after an update reaches
+        // `YoutubeDL.getInstance().execute` mid-unpack and every item fails with an
+        // initialisation error -- which no [Downloader] retry pattern recognises as
+        // transient, so all of them settle as permanently Failed on the first attempt.
+        //
+        // Three outcomes, and they need different answers:
+        //
+        // - It completes: the binaries are usable, carry on.
+        // - It throws: the init failed and will never succeed again in this process. Not
+        //   retryable -- `Result.retry()` here is what made a broken unpack loop forever,
+        //   WorkManager re-running the worker on backoff, each run holding a foreground
+        //   slot and posting an ongoing notification for binaries that cannot work. The
+        //   next *scheduled* run gets a fresh process and a fresh chance; this one is done.
+        // - It outruns the ceiling: the device is pathologically slow rather than broken,
+        //   which is genuinely worth another attempt from a process where the unpack has
+        //   long since settled.
+        val ready = withTimeoutOrNull(BINARY_INIT_TIMEOUT_MS) {
+            runCatching { App.binariesReady.await() }
+        }
+        if (ready == null) {
+            Log.w(TAG, "doWork: yt-dlp not initialised in time, retrying later")
+            return retryUntil(MAX_RUN_ATTEMPTS, "binary init timed out")
+        }
+        ready.onFailure {
+            Log.e(TAG, "doWork: yt-dlp init failed, nothing this run can do", it)
+            return Result.failure()
+        }
 
         Log.d(
             TAG,
             "doWork: starting scheduled sync of ${playlists.size} playlist(s), " +
                     "foreground=$wentForeground"
         )
-        try {
-            runSync(playlists)
-        } finally {
-            // Cleared on every path, cancellation included: leaving it set would make the
-            // next manual sync silently skip binding its own service.
-            App.isWorkerForeground.set(false)
-        }
+        val outcome = runSync(playlists, startedAt)
 
-        Log.d(TAG, "doWork: scheduled sync finished")
-        return Result.success()
+        Log.d(TAG, "doWork: scheduled sync finished, outcome=$outcome")
+        // A run that aborted before it could compare anything -- a listing that would not
+        // answer, an unreadable folder -- is a transient failure of exactly the kind
+        // WorkManager's backoff exists for. Returning success there made the worker wait
+        // out the whole interval, up to a week on the longest setting, over a fault that
+        // would typically have cleared in minutes.
+        return if (outcome == SyncOutcome.Failed) {
+            retryUntil(MAX_RUN_ATTEMPTS, "sync aborted")
+        } else {
+            Result.success()
+        }
     }
 
-    /** Starts the sync and suspends until it has finished. */
-    private suspend fun runSync(playlists: List<PlaylistEntry>) {
+    /**
+     * Asks WorkManager for another attempt, but only while there is reason to think one
+     * would go differently.
+     *
+     * "Transient" is an assumption, and some faults never clear on their own: a revoked
+     * API key, an exhausted quota, a sync folder the app has lost permission to. Each of
+     * those fails identically on every attempt, and an uncapped [Result.retry] answers by
+     * re-running a *foreground* worker on backoff indefinitely -- a recurring ongoing
+     * notification and real battery cost for a fault only the user can fix.
+     *
+     * Past the cap this returns success, which is not a claim that the run worked. It
+     * means the worker has stopped arguing with the backoff and is waiting for the next
+     * scheduled period, which is the natural cadence for a fault that has already
+     * survived several immediate attempts.
+     */
+    private fun retryUntil(attempts: Int, reason: String): Result =
+        if (runAttemptCount + 1 < attempts) {
+            Log.d(TAG, "doWork: $reason, retrying (attempt ${runAttemptCount + 1}/$attempts)")
+            Result.retry()
+        } else {
+            Log.w(TAG, "doWork: $reason, giving up after $attempts attempts")
+            Result.success()
+        }
+
+    /** How a scheduled run ended, as far as the worker needs to care. */
+    private enum class SyncOutcome {
+        /** The run finished, or was cancelled by the user, without aborting. */
+        Completed,
+
+        /** The run aborted before it could compare anything. Worth another attempt. */
+        Failed,
+
+        /** Something else held the downloader, or the run outlived the wait. Not ours to judge. */
+        NotOurs,
+    }
+
+    /** Starts the sync, suspends until it has finished, and reports how it ended. */
+    private suspend fun runSync(playlists: List<PlaylistEntry>, startedAt: Long): SyncOutcome {
+        // The flag goes up first, and comes back down immediately if the claim is lost.
+        //
+        // It has to precede the claim: syncPlaylists' compareAndSet is what moves the
+        // state off Idle, and Downloader's state collector reacts to that by calling
+        // App.startService() -- so a flag set after the call has already lost the race it
+        // exists to win, and the run would try to bind a foreground service from a
+        // WorkManager-woken background process.
+        //
+        // Setting it in doWork, before the suspending setForeground, was worse in the
+        // other direction. That IPC round-trip is a wide window, and a manual sync
+        // starting inside it found the flag already up: its startService() returned
+        // immediately, this worker then lost the claim, cleared the flag on its way out
+        // and released WorkManager's foreground slot with it -- leaving the user's sync
+        // running on applicationScope with no foreground host of any kind.
+        App.isWorkerForeground.set(true)
+
         // Silent: the ongoing notification is this run's voice, not a stack of toasts
         // over whatever the user is actually doing.
-        Downloader.syncPlaylists(playlists, silent = true)
-
-        // syncPlaylists returns as soon as it has launched the run, so wait for the run
-        // itself. Without this the worker completes immediately and WorkManager is free to
-        // consider the process idle while downloads are still writing files.
         //
-        // Two waits, the same shape DownloadService uses: first for the run to leave Idle
-        // (it may never, if syncPlaylists rejected the request), then for it to come back.
-        val started = withTimeoutOrNull(SYNC_START_TIMEOUT_MS) {
-            Downloader.downloaderState.first { it !is Downloader.State.Idle }
-        }
-        if (started == null) {
-            Log.w(TAG, "runSync: sync never started, nothing to wait for")
-            return
+        // The return value is the claim, and it is what decides whether there is anything
+        // to wait for. Watching the downloader state for a transition out of Idle -- which
+        // an earlier version did -- cannot tell "our run started" from "somebody else's
+        // run is already going": the state is global and a manual sync that beat us to the
+        // claim satisfies the wait instantly. The worker then sat on a run it did not own,
+        // holding App.isWorkerForeground, which suppresses the foreground service binding
+        // for the run that actually won -- leaving the real sync with no foreground host.
+        if (!Downloader.syncPlaylists(playlists, silent = true)) {
+            // Cleared before returning, not in a finally at the end: the run that won the
+            // claim is starting right now and needs to be able to bind its own service.
+            App.isWorkerForeground.set(false)
+            // And told to look again. The run that beat us to the claim asked the question
+            // while the flag was still up -- a window of a single compareAndSet, but a real
+            // one -- and was told to stand down. That answer is wrong the moment the line
+            // above executes, and nothing else will re-ask: the state transition that
+            // normally triggers the binding has already been and gone.
+            Downloader.rebindServiceIfRunning()
+            Log.d(TAG, "runSync: another run holds the downloader, leaving it to that one")
+            return SyncOutcome.NotOurs
         }
 
-        // Bounded, unlike the start wait's smaller timeout, because the thing being waited
-        // on is a whole sync. A wedged yt-dlp process (a stalled socket read holds its
-        // thread inside downloadVideo, so finishProcessing never runs) would otherwise
-        // suspend this worker forever while its ongoing notification sat on the user's
-        // screen. The ceiling is generous enough that a genuinely large first sync is not
-        // cut short, and the run itself is not cancelled when it expires -- it continues
-        // on applicationScope; this only stops the worker from waiting on it.
-        val finished = withTimeoutOrNull(SYNC_COMPLETION_TIMEOUT_MS) {
-            Downloader.downloaderState.first { it is Downloader.State.Idle }
-        }
-        if (finished == null) {
-            Log.w(TAG, "runSync: sync still running after the wait ceiling, leaving it to run")
+        try {
+            // Safe to wait for Idle directly, with no preceding "has it started yet" wait:
+            // the claim inside syncPlaylists is a synchronous compareAndSet off Idle, so
+            // the state is already DownloadingPlaylist by the time it returns true. There
+            // is no window here for the wait to match the Idle the run has not left yet.
+            //
+            // Bounded, because the thing being waited on is a whole sync. A wedged yt-dlp
+            // process (a stalled socket read holds its thread inside downloadVideo, so
+            // finishProcessing never runs) would otherwise suspend this worker until the
+            // platform killed it, with its ongoing notification sitting on the user's
+            // screen the whole time. The run itself is not cancelled when the ceiling
+            // expires -- it continues on applicationScope; this only stops the worker
+            // from waiting on it.
+            // What is left of the ceiling after everything doWork spent getting here.
+            // Floored rather than allowed to go negative, which withTimeoutOrNull would
+            // treat as "already expired" and return from without ever suspending -- the
+            // worker would abandon a sync it had just successfully claimed.
+            val remaining =
+                (SYNC_COMPLETION_TIMEOUT_MS - (SystemClock.elapsedRealtime() - startedAt))
+                    .coerceAtLeast(MIN_COMPLETION_WAIT_MS)
+            val finished = withTimeoutOrNull(remaining) {
+                Downloader.downloaderState.first { it is Downloader.State.Idle }
+            }
+            if (finished == null) {
+                Log.w(TAG, "runSync: sync still running after the wait ceiling, leaving it to run")
+                return SyncOutcome.NotOurs
+            }
+
+            // Published by finishProcessing just before the state returns to Idle, so it
+            // is already in place by the time the wait above resumes. `error` is set only
+            // when the run aborted before it could compare anything; a run that merely
+            // failed some individual items did its job and should not be retried wholesale.
+            val error = Downloader.syncResult.value?.error
+            if (error != null) {
+                Log.w(TAG, "runSync: sync aborted ($error)")
+                return SyncOutcome.Failed
+            }
+            return SyncOutcome.Completed
+        } finally {
+            // Cleared on every path, cancellation included -- and cancellation is the
+            // likely one: WorkManager stops a worker that outruns its execution window,
+            // which cancels this coroutine mid-wait. Leaving it set would make the next
+            // manual sync silently skip binding its own service.
+            App.isWorkerForeground.set(false)
         }
     }
 
@@ -183,16 +314,64 @@ class AutoSyncWorker(
         /** Unique name, so rescheduling replaces the schedule rather than stacking onto it. */
         private const val WORK_NAME = "auto_sync"
 
-        /** How long to wait for a sync to actually begin before concluding it was rejected. */
-        private const val SYNC_START_TIMEOUT_MS = 10_000L
+        /**
+         * How long to wait for yt-dlp and friends to finish unpacking.
+         *
+         * A minute is far longer than the unpack takes even on slow storage; what it is
+         * really sized against is the case where the init threw and [App.binariesReady]
+         * will never complete at all.
+         */
+        private const val BINARY_INIT_TIMEOUT_MS = 60 * 1000L
+
+        /**
+         * How many back-to-back attempts a failing scheduled run gets before it waits for
+         * the next period instead.
+         *
+         * WorkManager's backoff is exponential from 30 seconds, so three attempts spans
+         * roughly two minutes -- enough to ride out the faults that actually are transient
+         * (a listing that timed out, a network that dropped mid-run) without turning a
+         * permanent one into an unbounded loop of foreground workers.
+         */
+        private const val MAX_RUN_ATTEMPTS = 3
 
         /**
          * How long to wait for a started sync to finish before the worker stops waiting.
          *
-         * Two hours: comfortably longer than any real library's first full sync, and short
-         * enough that a wedged run cannot hold the worker (and its notification) forever.
+         * Sized against the platform, not against the work. WorkManager stops a worker
+         * that outruns its execution window -- ten minutes for a plain one, and a
+         * foreground one is stopped too, with `stopReason` TIMEOUT on API 31+ or under
+         * Doze and standby pressure. So a ceiling above that window can never fire: the
+         * platform's cancellation always arrives first, and the two-hour value this used
+         * to hold was dead code dressed as a safety net.
+         *
+         * Nine minutes leaves the ordinary case untouched -- the wait ends when the sync
+         * does, which for a typical run is well inside it -- while giving the worker a
+         * chance to return under its own power, clearing [App.isWorkerForeground] and
+         * releasing the foreground slot deliberately, rather than being cut down mid-wait.
+         * A run still going at that point is not abandoned: it continues on
+         * applicationScope, and the next scheduled run finds the downloader busy and
+         * stands down.
+         *
+         * Counted against the worker's own start, not against the wait's -- see the
+         * budget [runSync] is given. The platform's window opens when `doWork` does, so
+         * anything spent before the wait (the binary unpack, which can be a full minute on
+         * a cold first run) comes out of the same ten minutes. Measuring the ceiling from
+         * the wait alone let the two add up to more than the window, which is exactly the
+         * overrun this constant exists to stay inside.
          */
-        private const val SYNC_COMPLETION_TIMEOUT_MS = 2 * 60 * 60 * 1000L
+        private const val SYNC_COMPLETION_TIMEOUT_MS = 9 * 60 * 1000L
+
+        /**
+         * The smallest wait the run is given once the budget above is spent.
+         *
+         * Only reachable when the setup ahead of the wait ran long, and it exists because
+         * the alternative is worse: a zero or negative ceiling makes `withTimeoutOrNull`
+         * return without suspending at all, so the worker would walk away from a sync it
+         * had just won the claim for -- reporting NotOurs for its own run and leaving
+         * [App.isWorkerForeground] to be cleared while the run was still going. A short
+         * wait at least gives a quick sync the chance to finish and be reported honestly.
+         */
+        private const val MIN_COMPLETION_WAIT_MS = 30 * 1000L
 
         /**
          * Applies the current auto-sync preferences to WorkManager.
@@ -272,14 +451,33 @@ class AutoSyncWorker(
         }
 
         /**
-         * Applies a settings change to the schedule.
+         * Applies a settings change to the schedule, off the main thread.
          *
-         * The same call as [reschedule]: UPDATE already replaces a changed spec in place,
+         * The same work as [reschedule]: UPDATE already replaces a changed spec in place,
          * so nothing extra is needed. Kept as its own name because the call sites read
          * better for it, and because cancelling first -- which an earlier version did --
          * was both unnecessary and subtly wrong: `cancelUniqueWork` completes
          * asynchronously, so the enqueue that followed it could race the cancel.
+         *
+         * Where [reschedule] is called once per start from a caller that already has an IO
+         * context, this one is called from Compose click handlers -- every toggle of the
+         * auto-sync switch, every interval pick -- which run on the main thread.
+         * `getInstance` opens the WorkDatabase and the enqueue writes to disk, so calling
+         * it straight from the handler janks the frame the tap animates in. The
+         * `runCatching` matters just as much: WorkManager throws if it is not initialised
+         * or its database errors, and an exception out of a click handler reaches the
+         * default uncaught handler installed in `App.onCreate` and takes the app down on a
+         * settings tap.
+         *
+         * Fire-and-forget by design. Nothing on screen waits for the schedule -- the row
+         * already reflects the preference, which is written before this is called.
          */
-        fun applySettingsChange(context: Context) = reschedule(context)
+        fun applySettingsChange(context: Context) {
+            val appContext = context.applicationContext
+            App.applicationScope.launch(Dispatchers.IO) {
+                runCatching { reschedule(appContext) }
+                    .onFailure { Log.e(TAG, "applySettingsChange: could not reschedule", it) }
+            }
+        }
     }
 }

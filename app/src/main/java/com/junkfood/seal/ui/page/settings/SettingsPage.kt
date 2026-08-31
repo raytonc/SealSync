@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.NetworkCell
 import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -308,6 +309,28 @@ fun SettingsPage(
                         onCheckedChange = { requiresCharging ->
                             autoSyncCharging = requiresCharging
                             AUTO_SYNC_REQUIRES_CHARGING.updateBoolean(requiresCharging)
+                            AutoSyncWorker.applySettingsChange(context)
+                        },
+                    )
+
+                    // The only way back. Until this row existed the preference was
+                    // write-once: the metered-network dialog's "always" button set it true
+                    // and nothing anywhere set it false, so a user who tapped that once --
+                    // to get one sync through on the train -- had permanently signed every
+                    // future scheduled run up for mobile data with no way to take it back.
+                    //
+                    // Not gated on autoSyncEnabled, unlike the two rows above: this governs
+                    // manual syncs and retries just as much as scheduled ones.
+                    PreferenceSwitch(
+                        title = stringResource(R.string.cellular_download),
+                        description = stringResource(R.string.cellular_download_desc),
+                        icon = Icons.Rounded.NetworkCell,
+                        checked = cellularAllowed,
+                        onCheckedChange = { allowed ->
+                            cellularAllowed = allowed
+                            CELLULAR_DOWNLOAD.updateBoolean(allowed)
+                            // The schedule's network constraint is built from this, and an
+                            // already-enqueued one keeps whatever it was built with.
                             AutoSyncWorker.applySettingsChange(context)
                         },
                     )
@@ -655,9 +678,14 @@ private fun SyncIntervalDialog(
                 }
             }
         },
-        confirmButton = {
+        // Dismiss, not confirm: picking a row commits the change and closes the dialog, so
+        // there is nothing for an affirmative button to affirm. In the confirmButton slot
+        // Material puts it at the trailing edge where OK/Done belongs, which invites a tap
+        // from someone who opened the picker only to look.
+        dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
         },
+        confirmButton = {},
     )
 }
 

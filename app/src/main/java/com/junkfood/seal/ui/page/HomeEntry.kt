@@ -179,15 +179,28 @@ fun HomeEntry() {
                 return@LaunchedEffect
             }
 
-            runCatching {
-                Downloader.updateState(state = Downloader.State.Updating)
-                withContext(Dispatchers.IO) {
-                    UpdateUtil.updateYtDlp()
+            // The claim, not the snapshot read above, is what decides whether this runs.
+            // That read comes from a composition snapshot that can already be a frame
+            // stale, so passing it proves nothing about the state now -- it stays only as
+            // a cheap way to skip the preference and network checks in the common case.
+            if (!Downloader.claimForUpdate()) return@LaunchedEffect
+
+            // Released in a finally, because this effect is keyed on Unit and dies with
+            // the composable. Leaving the screen mid-update cancels the coroutine, and a
+            // release only on the normal path would strand the downloader in Updating for
+            // the life of the process -- every later sync, scheduled or manual, rejected
+            // by a claim nobody is holding any more.
+            try {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        UpdateUtil.updateYtDlp()
+                    }
+                }.onFailure {
+                    it.printStackTrace()
                 }
-            }.onFailure {
-                it.printStackTrace()
+            } finally {
+                Downloader.releaseUpdate()
             }
-            Downloader.updateState(state = Downloader.State.Idle)
         }
 
         LaunchedEffect(Unit) {

@@ -36,7 +36,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -60,7 +63,12 @@ import com.junkfood.seal.TrackDownload
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.SmallTopAppBar
+import com.junkfood.seal.ui.page.download.MeteredNetworkDialog
 import com.junkfood.seal.ui.theme.PreviewThemeLight
+import com.junkfood.seal.util.AutoSyncWorker
+import com.junkfood.seal.util.CELLULAR_DOWNLOAD
+import com.junkfood.seal.util.PreferenceUtil
+import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.ToastUtil
 
 /**
@@ -84,8 +92,44 @@ fun DownloadQueuePage(onNavigateBack: () -> Unit) {
     val isSyncing = downloaderState is Downloader.State.DownloadingPlaylist
 
     val view = LocalView.current
+    val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+
+    // Retry is a download, so it asks the same question every other download entry point
+    // asks. Without this the button was the one way to spend mobile data without being
+    // offered the choice -- and the likeliest reason those items failed in the first place
+    // is a network that had just gone flaky, so it is the button a user on cellular is
+    // most tempted to press.
+    var showMeteredNetworkDialog by remember { mutableStateOf(false) }
+    val retryOrAsk = {
+        if (!PreferenceUtil.isNetworkAvailableForDownload()) {
+            showMeteredNetworkDialog = true
+        } else {
+            Downloader.retryFailedDownloads()
+        }
+    }
+
+    if (showMeteredNetworkDialog) {
+        MeteredNetworkDialog(
+            onDismissRequest = { showMeteredNetworkDialog = false },
+            onAllowOnceConfirm = {
+                Downloader.retryFailedDownloads()
+                showMeteredNetworkDialog = false
+            },
+            onAllowAlwaysConfirm = {
+                // Persist the choice, otherwise "always" behaves the same as "once".
+                CELLULAR_DOWNLOAD.updateBoolean(true)
+                // The scheduled sync derives its network constraint from this same
+                // preference, and an already-enqueued schedule keeps the constraint it was
+                // built with -- so it would stay pinned to unmetered until something else
+                // happened to rebuild it.
+                AutoSyncWorker.applySettingsChange(context)
+                Downloader.retryFailedDownloads()
+                showMeteredNetworkDialog = false
+            },
+        )
+    }
 
     Scaffold(
         modifier = Modifier
@@ -139,7 +183,7 @@ fun DownloadQueuePage(onNavigateBack: () -> Unit) {
                         enabled = downloaderState is Downloader.State.Idle && summary.failed > 0,
                         onRetry = {
                             view.slightHapticFeedback()
-                            Downloader.retryFailedDownloads()
+                            retryOrAsk()
                         },
                     )
                 }
@@ -464,7 +508,16 @@ private fun TrackRow(
 
                     is TrackDownload.Status.Failed -> {
                         Text(
-                            text = status.reason,
+                            // The attempt count is worth showing only when there was more
+                            // than one: "(after 3 attempts)" says the network was tried and
+                            // kept failing, where a single attempt means the item was
+                            // rejected outright and the count would just be noise.
+                            text = pluralStringResource(
+                                R.plurals.queue_status_failed_attempts,
+                                status.attempts,
+                                status.reason,
+                                status.attempts,
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             maxLines = 3,
