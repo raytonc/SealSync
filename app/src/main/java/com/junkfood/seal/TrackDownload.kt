@@ -25,10 +25,26 @@ data class TrackDownload(
          */
         data class Downloading(val progress: Float = 0f, val line: String = "") : Status
 
+        /**
+         * Failed on a transient error and waiting out the backoff before trying again.
+         *
+         * Its own status rather than a flag on [Downloading]: a row in this state is not
+         * making progress, so rendering it with a progress ring frozen at whatever
+         * fraction it died at reads as a stalled download. [attempt] is the attempt that
+         * just failed, 1-based, and [reason] is why -- both worth showing, since a run
+         * that quietly retried three times and then succeeded should still be able to say
+         * that it did.
+         */
+        data class Retrying(val attempt: Int, val reason: String) : Status
+
         data object Done : Status
 
-        /** [reason] is the throwable's message, shown on the row and copyable. */
-        data class Failed(val reason: String) : Status
+        /**
+         * [reason] is the throwable's message, shown on the row and copyable. [attempts]
+         * is how many times the item was tried, so a row can distinguish a video that is
+         * simply unavailable from one the network never managed to fetch.
+         */
+        data class Failed(val reason: String, val attempts: Int = 1) : Status
 
         /** Never started: the run was cancelled while this one was still queued. */
         data object Skipped : Status
@@ -46,6 +62,9 @@ data class QueueSummary(
     val skipped: Int = 0,
     val downloading: Int = 0,
     val queued: Int = 0,
+    /** Items waiting out a backoff before another attempt. Counted apart from [downloading]:
+     * they are not transferring anything, and the header says so in its own words. */
+    val retrying: Int = 0,
     /**
      * Overall completion, 0..1. Finished items count whole and in-flight ones count their
      * own fraction, so the bar advances continuously even though several items move at

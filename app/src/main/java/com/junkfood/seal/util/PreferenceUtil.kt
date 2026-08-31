@@ -22,6 +22,30 @@ const val YOUTUBE_CHANNEL_HANDLE = "youtube_channel_handle"
 const val NOTIFICATION = "notification"
 const val CELLULAR_DOWNLOAD = "cellular_download"
 
+// --- Scheduled background sync ---
+/** Whether the periodic sync is scheduled at all. Off until the user asks for it. */
+const val AUTO_SYNC_ENABLED = "auto_sync_enabled"
+
+/** How often the periodic sync runs, in hours. One of [AUTO_SYNC_INTERVALS]. */
+const val AUTO_SYNC_INTERVAL_HOURS = "auto_sync_interval_hours"
+
+/** Whether a scheduled sync may run while charging only. */
+const val AUTO_SYNC_REQUIRES_CHARGING = "auto_sync_requires_charging"
+
+/**
+ * The intervals the settings screen offers, in hours.
+ *
+ * Nothing shorter than 6h at the low end and nothing beyond a week at the high end.
+ * WorkManager clamps a periodic request to a 15-minute floor anyway, but the floor that
+ * matters here is a different one: a sync lists every playlist over the network and can
+ * spend minutes downloading, so running it many times a day costs real battery to
+ * discover, almost always, that nothing changed.
+ */
+val AUTO_SYNC_INTERVALS = listOf(6, 12, 24, 72, 168)
+
+/** Default cadence: once a day. */
+const val AUTO_SYNC_DEFAULT_INTERVAL_HOURS = 24
+
 // --- Updates ---
 const val YT_DLP_VERSION = "yt-dlp_init"
 const val YT_DLP_AUTO_UPDATE = "yt-dlp_update"
@@ -59,12 +83,15 @@ private val StringPreferenceDefaults = mapOf(
 
 private val BooleanPreferenceDefaults = mapOf(
     CELLULAR_DOWNLOAD to false,
+    AUTO_SYNC_ENABLED to false,
+    AUTO_SYNC_REQUIRES_CHARGING to false,
     YT_DLP_AUTO_UPDATE to true,
     NOTIFICATION to true,
     SETUP_COMPLETED to false,
 )
 
 private val IntPreferenceDefaults = mapOf(
+    AUTO_SYNC_INTERVAL_HOURS to AUTO_SYNC_DEFAULT_INTERVAL_HOURS,
     UPDATE_CHANNEL to STABLE,
     YT_DLP_UPDATE_CHANNEL to YT_DLP_NIGHTLY,
 )
@@ -89,6 +116,8 @@ object PreferenceUtil {
         kv.decodeLong(this, default)
 
     fun String.updateString(newString: String) = kv.encode(this, newString)
+
+    fun String.updateInt(newValue: Int) = kv.encode(this, newValue)
 
     fun String.updateLong(newLong: Long) = kv.encode(this, newLong)
 

@@ -10,44 +10,65 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.App
 import com.junkfood.seal.R
 import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.PreferenceItem
+import com.junkfood.seal.ui.component.PreferenceSwitch
 import com.junkfood.seal.ui.component.SmallTopAppBar
 import com.junkfood.seal.ui.page.UpdateDialogImpl
 import com.junkfood.seal.util.FileUtil
+import com.junkfood.seal.util.AUTO_SYNC_ENABLED
+import com.junkfood.seal.util.AUTO_SYNC_INTERVALS
+import com.junkfood.seal.util.AUTO_SYNC_INTERVAL_HOURS
+import com.junkfood.seal.util.AUTO_SYNC_REQUIRES_CHARGING
+import com.junkfood.seal.util.AutoSyncWorker
+import com.junkfood.seal.util.CELLULAR_DOWNLOAD
+import com.junkfood.seal.util.PreferenceUtil.getBoolean
+import com.junkfood.seal.util.PreferenceUtil.getInt
 import com.junkfood.seal.util.PreferenceUtil.getString
+import com.junkfood.seal.util.PreferenceUtil.updateBoolean
+import com.junkfood.seal.util.PreferenceUtil.updateInt
 import com.junkfood.seal.util.PreferenceUtil.updateString
 import com.junkfood.seal.util.ShortcutUtil
 import com.junkfood.seal.util.ToastUtil
@@ -144,6 +165,16 @@ fun SettingsPage(
     var showChannelHandleDialog by remember { mutableStateOf(false) }
     var currentChannelHandle by remember { mutableStateOf(YOUTUBE_CHANNEL_HANDLE.getString()) }
 
+    // Auto-sync. Held as state rather than read straight from the store on each
+    // recomposition so the rows update the moment they are toggled; every write is
+    // followed by a reschedule, which is what actually makes the change take effect.
+    var autoSyncEnabled by remember { mutableStateOf(AUTO_SYNC_ENABLED.getBoolean()) }
+    var autoSyncHours by remember { mutableIntStateOf(AUTO_SYNC_INTERVAL_HOURS.getInt()) }
+    var autoSyncCharging by remember {
+        mutableStateOf(AUTO_SYNC_REQUIRES_CHARGING.getBoolean())
+    }
+    var showIntervalDialog by remember { mutableStateOf(false) }
+
     val dirLauncher =
         rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
             override fun createIntent(context: Context, input: Uri?): Intent {
@@ -211,6 +242,64 @@ fun SettingsPage(
                         showChannelHandleDialog = true
                     }
                 }
+            }
+
+            // --- Automatic sync: the schedule, and the two constraints worth exposing.
+            item { SettingSectionHeader(text = stringResource(R.string.auto_sync)) }
+            item {
+                SettingGroup {
+                    PreferenceSwitch(
+                        title = stringResource(R.string.auto_sync_enable),
+                        description = if (autoSyncEnabled)
+                            stringResource(
+                                R.string.auto_sync_enabled_desc,
+                                intervalLabel(context, autoSyncHours)
+                            )
+                        else
+                            stringResource(R.string.auto_sync_enable_desc),
+                        icon = Icons.Rounded.Sync,
+                        checked = autoSyncEnabled,
+                        onCheckedChange = { enabled ->
+                            autoSyncEnabled = enabled
+                            AUTO_SYNC_ENABLED.updateBoolean(enabled)
+                            AutoSyncWorker.applySettingsChange(context)
+                        },
+                    )
+
+                    PreferenceItem(
+                        title = stringResource(R.string.auto_sync_interval),
+                        description = intervalLabel(context, autoSyncHours),
+                        icon = Icons.Rounded.Schedule,
+                        // Dimmed rather than hidden while off, so the cadence a run would
+                        // use is still visible when deciding whether to turn it on.
+                        enabled = autoSyncEnabled,
+                    ) {
+                        showIntervalDialog = true
+                    }
+
+                    PreferenceSwitch(
+                        title = stringResource(R.string.auto_sync_charging),
+                        description = stringResource(R.string.auto_sync_charging_desc),
+                        icon = Icons.Rounded.BatteryChargingFull,
+                        enabled = autoSyncEnabled,
+                        checked = autoSyncCharging,
+                        onCheckedChange = { requiresCharging ->
+                            autoSyncCharging = requiresCharging
+                            AUTO_SYNC_REQUIRES_CHARGING.updateBoolean(requiresCharging)
+                            AutoSyncWorker.applySettingsChange(context)
+                        },
+                    )
+                }
+            }
+            // Says out loud what the constraints mean, because the alternative is a user
+            // concluding the feature is broken when it is in fact waiting on wifi.
+            item {
+                PreferenceInfoNote(
+                    text = stringResource(
+                        if (CELLULAR_DOWNLOAD.getBoolean()) R.string.auto_sync_note_any_network
+                        else R.string.auto_sync_note_unmetered
+                    )
+                )
             }
 
             // --- Shortcuts and maintenance.
@@ -385,6 +474,19 @@ fun SettingsPage(
             )
         }
 
+        if (showIntervalDialog) {
+            SyncIntervalDialog(
+                selectedHours = autoSyncHours,
+                onDismiss = { showIntervalDialog = false },
+                onSelect = { hours ->
+                    autoSyncHours = hours
+                    AUTO_SYNC_INTERVAL_HOURS.updateInt(hours)
+                    AutoSyncWorker.applySettingsChange(context)
+                    showIntervalDialog = false
+                },
+            )
+        }
+
         if (showApiKeyDialog) {
             YouTubeApiKeyDialog(
                 onDismiss = { showApiKeyDialog = false },
@@ -497,5 +599,73 @@ fun YouTubeApiKeyDialog(
                 Text("Cancel")
             }
         }
+    )
+}
+
+/**
+ * A cadence as a sentence: "Every 12 hours", "Daily", "Weekly".
+ *
+ * The plain plural reads badly at the two values people actually pick -- "Every 24 hours"
+ * and "Every 168 hours" are both technically correct and neither is how anyone describes
+ * a schedule -- so those two get their own words.
+ */
+private fun intervalLabel(context: Context, hours: Int): String = when (hours) {
+    24 -> context.getString(R.string.auto_sync_interval_daily)
+    168 -> context.getString(R.string.auto_sync_interval_weekly)
+    else -> context.resources.getQuantityString(
+        R.plurals.auto_sync_interval_hours, hours, hours
+    )
+}
+
+/** Picks the cadence. A short fixed list, so radio buttons rather than a slider. */
+@Composable
+private fun SyncIntervalDialog(
+    selectedHours: Int,
+    onDismiss: () -> Unit,
+    onSelect: (Int) -> Unit,
+) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.auto_sync_interval)) },
+        text = {
+            Column {
+                AUTO_SYNC_INTERVALS.forEach { hours ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = hours == selectedHours,
+                                role = Role.RadioButton,
+                                onClick = { onSelect(hours) },
+                            )
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = hours == selectedHours, onClick = null)
+                        Spacer(Modifier.size(16.dp))
+                        Text(intervalLabel(context, hours))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+/**
+ * A quiet line of explanation under a settings group, for the thing a group of switches
+ * cannot say about itself. Not a [PreferenceItem]: it is not tappable and should not look
+ * like it is.
+ */
+@Composable
+private fun PreferenceInfoNote(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 28.dp, end = 28.dp, top = 8.dp),
     )
 }

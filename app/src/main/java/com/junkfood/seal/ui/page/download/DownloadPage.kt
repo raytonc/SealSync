@@ -78,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -106,6 +107,7 @@ import com.junkfood.seal.ui.component.SwipeToRemove
 import com.junkfood.seal.ui.component.SyncProgressCard
 import com.junkfood.seal.ui.component.SyncSummaryCard
 import com.junkfood.seal.ui.theme.ArtworkShape
+import com.junkfood.seal.util.AutoSyncWorker
 import com.junkfood.seal.util.CELLULAR_DOWNLOAD
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -129,6 +131,7 @@ fun DownloadPage(
     playlistViewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val view = LocalView.current
+    val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
     val queueSummary by Downloader.queueSummary.collectAsStateWithLifecycle()
@@ -230,6 +233,11 @@ fun DownloadPage(
             onAllowAlwaysConfirm = {
                 // Persist the choice, otherwise "always" behaves the same as "once".
                 CELLULAR_DOWNLOAD.updateBoolean(true)
+                // The scheduled sync derives its network constraint from this same
+                // preference, and an already-enqueued schedule keeps the constraint it was
+                // built with -- so it would stay pinned to unmetered until something else
+                // happened to rebuild it.
+                AutoSyncWorker.applySettingsChange(context)
                 Downloader.syncPlaylists(playlists)
                 showMeteredNetworkDialog = false
             }

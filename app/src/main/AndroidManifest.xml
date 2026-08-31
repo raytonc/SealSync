@@ -71,6 +71,20 @@
             </intent-filter>
         </activity>
 
+        <!--
+            WorkManager runs a foreground worker inside its own SystemForegroundService,
+            which it declares without a type. AutoSyncWorker takes the foreground slot for
+            a scheduled sync, so the type has to be merged in here or the promotion is
+            rejected on Android 14+ (targetSdk 34 requires every foregroundServiceType to
+            be declared). Same specialUse type as DownloadService, for the same reason:
+            a sync is a long-running user-initiated transfer that fits none of the
+            enumerated categories.
+        -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="specialUse"
+            tools:node="merge" />
+
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"

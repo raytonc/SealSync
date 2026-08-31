@@ -273,6 +273,9 @@ dependencies {
     //MMKV (Ultrafast Key-Value storage)
     implementation(libs.mmkv)
 
+    //WorkManager, for the scheduled background sync
+    implementation(libs.androidx.work.runtime)
+
     //Unit testing libraries
     testImplementation(libs.junit4)
     androidTestImplementation(libs.androidx.test.ext)

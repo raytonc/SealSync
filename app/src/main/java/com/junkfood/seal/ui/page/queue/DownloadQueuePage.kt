@@ -20,10 +20,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RemoveCircleOutline
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -126,6 +128,10 @@ fun DownloadQueuePage(onNavigateBack: () -> Unit) {
                     FailedRunBanner(
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                         failedCount = queue.size,
+                        onRetry = {
+                            view.slightHapticFeedback()
+                            Downloader.retryFailedDownloads()
+                        },
                     )
                 }
 
@@ -197,9 +203,11 @@ private fun List<TrackDownload>.groupByStatus(): QueueSections {
     val waiting = mutableListOf<TrackDownload>()
     val finished = mutableListOf<TrackDownload>()
     forEach { track ->
-        when {
-            track.status is TrackDownload.Status.Downloading -> active
-            track.status is TrackDownload.Status.Queued -> waiting
+        when (track.status) {
+            // A retrying item is between attempts, not finished with them -- it belongs
+            // with the work still in flight rather than in the record of what happened.
+            is TrackDownload.Status.Downloading, is TrackDownload.Status.Retrying -> active
+            is TrackDownload.Status.Queued -> waiting
             else -> finished
         } += track
     }
@@ -293,7 +301,11 @@ private fun QueueHeader(
  * so rather than reporting counts the summary card on the home screen already gave.
  */
 @Composable
-private fun FailedRunBanner(modifier: Modifier = Modifier, failedCount: Int) {
+private fun FailedRunBanner(
+    modifier: Modifier = Modifier,
+    failedCount: Int,
+    onRetry: () -> Unit,
+) {
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -323,6 +335,18 @@ private fun FailedRunBanner(modifier: Modifier = Modifier, failedCount: Int) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
                 )
+            }
+            Spacer(Modifier.width(8.dp))
+            // The whole point of keeping these rows around. Retrying them costs a handful
+            // of downloads; the alternative the user had was re-running the entire sync.
+            FilledTonalButton(onClick = onRetry) {
+                Icon(
+                    imageVector = Icons.Outlined.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.queue_retry_failed))
             }
         }
     }
@@ -398,6 +422,22 @@ private fun TrackRow(
                         )
                     }
 
+                    // Says what went wrong and that it is coming back, so a row waiting
+                    // out a backoff does not read as an unexplained pause.
+                    is TrackDownload.Status.Retrying -> {
+                        Text(
+                            text = stringResource(
+                                R.string.queue_status_retrying,
+                                status.attempt + 1,
+                                status.reason,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
                     is TrackDownload.Status.Failed -> {
                         Text(
                             text = status.reason,
@@ -469,6 +509,9 @@ private fun TrackDownload.Status.iconAndTint(): Pair<ImageVector, Color> = when 
     is TrackDownload.Status.Done ->
         Icons.Outlined.CheckCircle to MaterialTheme.colorScheme.primary
 
+    is TrackDownload.Status.Retrying ->
+        Icons.Outlined.Refresh to MaterialTheme.colorScheme.tertiary
+
     is TrackDownload.Status.Failed ->
         Icons.Outlined.ErrorOutline to MaterialTheme.colorScheme.error
 
@@ -481,9 +524,11 @@ private fun TrackDownload.Status.labelRes(): Int = when (this) {
     is TrackDownload.Status.Queued -> R.string.queue_status_queued
     is TrackDownload.Status.Done -> R.string.queue_status_done
     is TrackDownload.Status.Skipped -> R.string.queue_status_skipped
-    // Both carry their own line and never reach here.
-    is TrackDownload.Status.Downloading, is TrackDownload.Status.Failed ->
-        R.string.queue_status_queued
+    // All three carry their own line and never reach here.
+    is TrackDownload.Status.Downloading,
+    is TrackDownload.Status.Failed,
+    is TrackDownload.Status.Retrying,
+        -> R.string.queue_status_queued
 }
 
 @Composable

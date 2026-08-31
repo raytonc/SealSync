@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -26,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -121,6 +124,71 @@ fun PreferenceItem(
 
 }
 
+
+/**
+ * A preference row that is a boolean.
+ *
+ * The whole row toggles, not just the switch: a 48dp target at the far edge of the screen
+ * is the hardest part of the row to hit, and the switch stays as the affordance that says
+ * what the row does. Built on the same paddings as [PreferenceItem] so the two stack
+ * without a seam inside a [SettingGroup].
+ */
+@Composable
+fun PreferenceSwitch(
+    title: String,
+    description: String? = null,
+    icon: ImageVector? = null,
+    enabled: Boolean = true,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.toggleable(
+            value = checked,
+            enabled = enabled,
+            role = Role.Switch,
+            onValueChange = onCheckedChange,
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal.dp, vertical.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            icon?.let {
+                Icon(
+                    imageVector = it,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(start = 8.dp, end = 16.dp)
+                        .size(24.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.applyOpacity(enabled)
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = if (icon == null) 12.dp else 0.dp)
+                    .padding(end = 16.dp)
+            ) {
+                PreferenceItemTitle(text = title, enabled = enabled)
+                if (!description.isNullOrEmpty()) PreferenceItemDescription(
+                    text = description,
+                    enabled = enabled
+                )
+            }
+            // Null callback: the row above owns the interaction, and leaving the switch
+            // independently clickable makes it a second, smaller target for the same
+            // action -- which reads to accessibility services as two separate controls.
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+                enabled = enabled,
+            )
+        }
+    }
+}
 
 @Composable
 internal fun PreferenceItemTitle(

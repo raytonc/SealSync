@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +72,70 @@ object Downloader {
      * low-memory killer mid-sync.
      */
     private const val MAX_CONCURRENT_DOWNLOADS = 3
+
+    /**
+     * How many times one item is attempted before the run gives up on it.
+     *
+     * A download is a single yt-dlp process against a network that a phone is unusually
+     * good at losing: a cell handover, a wifi roam, or a throttled extractor response all
+     * surface as one item throwing while the rest of the run is fine. That item used to be
+     * lost for the whole sync -- the only recovery was running the entire thing again,
+     * re-listing every playlist and re-scanning the folder, to retry the one track.
+     *
+     * Three attempts total, not more: a genuinely unavailable video (deleted, private,
+     * region-blocked) fails identically every time, and retrying it is pure cost. The
+     * classifier in [isTransient] is what keeps those out of the retry path in the first
+     * place.
+     */
+    private const val MAX_ATTEMPTS = 3
+
+    /**
+     * Base backoff between attempts, doubled each time (2s, then 4s).
+     *
+     * Short on purpose. This is a foreground service the user is often watching, and the
+     * failures worth retrying are the ones that clear in seconds -- yt-dlp already does
+     * its own [DownloadUtil.LISTING_RETRIES]-style retrying inside a single attempt for
+     * anything shorter than that.
+     */
+    private const val RETRY_BACKOFF_MS = 2_000L
+
+    /**
+     * Failure messages that mean "try again", as substrings of the reason yt-dlp reports.
+     *
+     * Matched against the message rather than an exception type because everything below
+     * arrives as the same wrapper throwable out of the yt-dlp process -- the distinction
+     * only exists in its stderr. Kept lowercase; the match lowercases the message first.
+     *
+     * Deliberately a permissive list of *retryable* patterns rather than a list of fatal
+     * ones. An unrecognised failure is treated as permanent, so a new kind of hard error
+     * costs one attempt, not three.
+     */
+    private val TRANSIENT_FAILURE_PATTERNS = listOf(
+        "timed out",
+        "timeout",
+        "connection reset",
+        "connection refused",
+        "connection aborted",
+        "connection error",
+        "temporary failure",
+        "temporarily unavailable",
+        "network is unreachable",
+        "unable to download",
+        "read operation",
+        "incomplete read",
+        "content too short",
+        "remote end closed",
+        "http error 429",
+        "http error 500",
+        "http error 502",
+        "http error 503",
+        "http error 504",
+        "unable to connect",
+        "urlopen error",
+        "handshake",
+        "broken pipe",
+        "fragment",
+    )
 
     /**
      * Matches the `[videoId]` yt-dlp appends via the output template, which always sits
@@ -247,6 +312,7 @@ object Downloader {
         var skipped = 0
         var downloading = 0
         var queued = 0
+        var retrying = 0
         // Finished items count as a whole unit and running ones as their own fraction, so
         // the overall bar advances continuously instead of stepping once per track.
         var completedUnits = 0.0
@@ -257,6 +323,10 @@ object Downloader {
                     downloading++
                     completedUnits += (status.progress / 100f).coerceIn(0f, 1f)
                 }
+
+                // Contributes nothing to the bar: the attempt that just failed wrote no
+                // usable bytes, and the next one starts from zero.
+                is TrackDownload.Status.Retrying -> retrying++
 
                 is TrackDownload.Status.Done -> {
                     done++
@@ -283,6 +353,7 @@ object Downloader {
             skipped = skipped,
             downloading = downloading,
             queued = queued,
+            retrying = retrying,
             progress = (completedUnits / size).toFloat(),
         )
     }
@@ -350,8 +421,15 @@ object Downloader {
     /**
      * Syncs the audio folder against every saved playlist: downloads playlist items that
      * are missing locally, and deletes local files that are no longer in any playlist.
+     *
+     * [silent] suppresses the run's progress and completion toasts. A scheduled sync sets
+     * it: those toasts exist to acknowledge a tap the user just made, and firing them at
+     * someone who is in another app entirely -- three times, over several minutes, for
+     * work they did not ask for right now -- is how a background feature makes itself
+     * unwelcome. The ongoing notification is the right channel for a run nobody started
+     * by hand, and it carries the same information.
      */
-    fun syncPlaylists(playlists: List<PlaylistEntry>) {
+    fun syncPlaylists(playlists: List<PlaylistEntry>, silent: Boolean = false) {
         if (!isDownloaderAvailable()) return
         if (playlists.isEmpty()) {
             ToastUtil.showToast(context.getString(R.string.sync_no_playlists))
@@ -405,7 +483,9 @@ object Downloader {
                 // that fired one identical toast per saved playlist. A sync can be started
                 // from the launcher shortcut with no UI at all, so this is the only
                 // acknowledgement that the tap did anything.
-                ToastUtil.showToast(context.getString(R.string.fetching_playlist_info))
+                if (!silent) {
+                    ToastUtil.showToast(context.getString(R.string.fetching_playlist_info))
+                }
                 val metadataRefresh = launch {
                     runCatching { refreshPlaylistMetadata(playlists, apiKey) }
                         .onFailure { Log.e(TAG, "syncPlaylists: metadata refresh failed", it) }
@@ -527,11 +607,13 @@ object Downloader {
                 // so mark the point where transfers actually begin -- and say how many, which
                 // is the first moment the run knows. Shortcut-triggered syncs have no other
                 // sign of this, and "fetching" followed by a long silence reads as a stall.
-                ToastUtil.showToast(
-                    context.resources.getQuantityString(
-                        R.plurals.sync_starting_downloads, downloadCount, downloadCount
+                if (!silent) {
+                    ToastUtil.showToast(
+                        context.resources.getQuantityString(
+                            R.plurals.sync_starting_downloads, downloadCount, downloadCount
+                        )
                     )
-                )
+                }
 
                 // Items download [MAX_CONCURRENT_DOWNLOADS] at a time. Each one blocks a
                 // thread for its whole life -- yt-dlp is an external process the wrapper
@@ -579,20 +661,11 @@ object Downloader {
                                 // Straight to the download: the listing already gave us the
                                 // id and the title, which is everything the old separate
                                 // info fetch contributed.
-                                downloadVideo(videoId, title, preferences)
-                                    .onSuccess {
-                                        downloadedCount.incrementAndGet()
-                                        updateTrack(videoId) {
-                                            it.copy(status = TrackDownload.Status.Done)
-                                        }
-                                    }
-                                    .onFailure { th ->
-                                        failedCount.incrementAndGet()
-                                        updateTrack(videoId) {
-                                            it.copy(status = TrackDownload.Status.Failed(th.toReason()))
-                                        }
-                                        reportItemError(th, videoId)
-                                    }
+                                if (downloadWithRetries(videoId, title, preferences, semaphore)) {
+                                    downloadedCount.incrementAndGet()
+                                } else {
+                                    failedCount.incrementAndGet()
+                                }
 
                                 // Counted on the way out, not on the way in: with several
                                 // running at once, reporting "n of m" as each one *starts*
@@ -637,6 +710,116 @@ object Downloader {
                     deleted = deletedCount,
                     failed = failedCount.get(),
                     // Whoever cancelled flipped the state off DownloadingPlaylist first.
+                    cancelled = downloaderState.value !is State.DownloadingPlaylist,
+                    error = abortReason,
+                    silent = silent,
+                )
+            }
+        }
+    }
+
+    /**
+     * Re-attempts just the tracks the last run failed on, without touching anything else.
+     *
+     * A full sync to recover a handful of failures is disproportionate: it re-lists every
+     * playlist, re-scans the folder and re-runs the delete pass, all to arrive back at the
+     * same short list of items. It is also *riskier* than the retry itself -- a listing
+     * that fails in the meantime aborts the whole thing, and the failures stay unfixed.
+     *
+     * So this skips straight to step 6. It downloads by video id, which the failed rows
+     * already carry, and deliberately performs no deletion: this run has no picture of
+     * what the playlists currently hold, and the one rule the delete step must never break
+     * is acting on a partial picture.
+     *
+     * Rows that succeed are dropped by [retainFailedTracks] at the end, so the queue empties
+     * as failures are cleared and keeps whatever is still broken.
+     */
+    fun retryFailedDownloads() {
+        if (!isDownloaderAvailable()) return
+
+        // Snapshot before anything can mutate the map: these are the rows this run owns.
+        val failed = mutableQueue.value.values
+            .filter { it.status is TrackDownload.Status.Failed }
+        if (failed.isEmpty()) {
+            ToastUtil.showToast(context.getString(R.string.retry_nothing_to_retry))
+            return
+        }
+
+        Log.d(TAG, "retryFailedDownloads: retrying ${failed.size} item(s)")
+        clearErrorState()
+        clearSyncResult()
+        // Back to Queued so the rows read as pending work rather than as the previous
+        // run's wreckage, and so the summary's progress bar starts from zero.
+        mutableQueue.update { tracks ->
+            tracks.mapValues { (_, track) ->
+                if (track.status is TrackDownload.Status.Failed) {
+                    track.copy(status = TrackDownload.Status.Queued)
+                } else track
+            }
+        }
+        // Straight to the downloading phase: there is nothing to fetch, scan or delete.
+        mutableDownloaderState.update {
+            State.DownloadingPlaylist(itemCount = failed.size, phase = Phase.Downloading)
+        }
+
+        applicationScope.launch(Dispatchers.IO) {
+            val downloadedCount = AtomicInteger()
+            val failedCount = AtomicInteger()
+            var abortReason: String? = null
+
+            try {
+                val preferences = DownloadUtil.DownloadPreferences(
+                    embedMetadata = true,
+                    cropArtwork = true
+                )
+                val finishedItems = AtomicInteger()
+                val semaphore = Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+                coroutineScope {
+                    failed.forEach { track ->
+                        launch(Dispatchers.IO) {
+                            semaphore.withPermit {
+                                if (downloaderState.value !is State.DownloadingPlaylist) {
+                                    updateTrack(track.videoId) {
+                                        it.copy(status = TrackDownload.Status.Skipped)
+                                    }
+                                    return@withPermit
+                                }
+
+                                if (downloadWithRetries(
+                                        track.videoId, track.title, preferences, semaphore
+                                    )
+                                ) {
+                                    downloadedCount.incrementAndGet()
+                                } else {
+                                    failedCount.incrementAndGet()
+                                }
+
+                                val done = finishedItems.incrementAndGet()
+                                mutableDownloaderState.update {
+                                    if (it is State.DownloadingPlaylist) {
+                                        it.copy(currentItem = done, itemCount = failed.size)
+                                    } else it
+                                }
+                                NotificationUtil.updateServiceNotificationForPlaylist(
+                                    done, failed.size, queueSummary.value.downloading
+                                )
+                            }
+                        }
+                    }
+                }
+                Log.d(TAG, "retryFailedDownloads: complete")
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (th: Throwable) {
+                Log.e(TAG, "retryFailedDownloads: failed", th)
+                abortReason = th.toReason()
+                throw th
+            } finally {
+                finishProcessing(
+                    downloaded = downloadedCount.get(),
+                    deleted = 0,
+                    failed = failedCount.get(),
                     cancelled = downloaderState.value !is State.DownloadingPlaylist,
                     error = abortReason,
                 )
@@ -828,6 +1011,95 @@ object Downloader {
             ?: this::class.simpleName.orEmpty()
 
     /**
+     * Whether a failure is worth another attempt.
+     *
+     * A cancellation never is -- the run is over and retrying would fight it. Everything
+     * else is matched against [TRANSIENT_FAILURE_PATTERNS], and anything unrecognised is
+     * treated as permanent: a video that is private, deleted, region-blocked or
+     * age-gated fails the same way on every attempt, so retrying it only spends the
+     * user's battery and the run's time to arrive at the same answer.
+     */
+    private fun Throwable.isTransient(): Boolean {
+        if (this is YoutubeDL.CanceledException) return false
+        val text = (message ?: return false).lowercase(Locale.US)
+        return TRANSIENT_FAILURE_PATTERNS.any { it in text }
+    }
+
+    /**
+     * Downloads one item, retrying transient failures up to [MAX_ATTEMPTS] times. Returns
+     * true if the item eventually landed.
+     *
+     * Settles the item's queue row on every path -- Done, or Failed carrying the attempt
+     * count -- so the caller only has to tally the outcome. Between attempts the row goes
+     * to [TrackDownload.Status.Retrying] and the coroutine sleeps out a doubling backoff,
+     * which is also a cancellation point: a run cancelled while an item is waiting stops
+     * there instead of burning the rest of its attempts.
+     */
+    private suspend fun downloadWithRetries(
+        videoId: String,
+        title: String,
+        preferences: DownloadUtil.DownloadPreferences,
+        semaphore: Semaphore,
+    ): Boolean {
+        var attempt = 1
+        while (true) {
+            val result = downloadVideo(videoId, title, preferences)
+            result.onSuccess {
+                updateTrack(videoId) { it.copy(status = TrackDownload.Status.Done) }
+                return true
+            }
+            val th = result.exceptionOrNull() ?: IllegalStateException("unknown failure")
+
+            // Out of attempts, not worth retrying, or the run is over: settle as failed.
+            // The state check matters as much as the other two -- without it a cancelled
+            // run would keep re-attempting its in-flight items through their full backoff.
+            val giveUp = attempt >= MAX_ATTEMPTS ||
+                    !th.isTransient() ||
+                    downloaderState.value !is State.DownloadingPlaylist
+            if (giveUp) {
+                updateTrack(videoId) {
+                    it.copy(
+                        status = TrackDownload.Status.Failed(th.toReason(), attempts = attempt)
+                    )
+                }
+                reportItemError(th, videoId)
+                return false
+            }
+
+            val backoff = RETRY_BACKOFF_MS shl (attempt - 1)
+            Log.w(
+                TAG,
+                "downloadWithRetries: $videoId attempt $attempt/$MAX_ATTEMPTS failed " +
+                        "(${th.toReason()}), retrying in ${backoff}ms"
+            )
+            updateTrack(videoId) {
+                it.copy(
+                    status = TrackDownload.Status.Retrying(
+                        attempt = attempt, reason = th.toReason()
+                    )
+                )
+            }
+            // Give the download slot back while waiting. The caller holds a permit for
+            // the whole item, and there are only [MAX_CONCURRENT_DOWNLOADS] of them -- so
+            // sleeping out a backoff inside one idles a third of the run's capacity, and
+            // three items backing off together stop it dead. Releasing here lets the
+            // queue behind them keep moving, and the permit is retaken before the next
+            // attempt so the concurrency cap still holds.
+            semaphore.release()
+            try {
+                delay(backoff)
+            } finally {
+                // Reacquired even if the delay is cancelled: the caller's `withPermit`
+                // releases unconditionally on the way out, so leaving without a permit
+                // would push the semaphore's count above its limit and let the cap drift
+                // upward for the rest of the run.
+                semaphore.acquire()
+            }
+            attempt++
+        }
+    }
+
+    /**
      * Downloads one video, publishing its progress into [mutableQueue] for as long as it
      * runs. Safe to call from several coroutines at once: the entry is keyed by [videoId],
      * so concurrent items report side by side instead of overwriting one shared slot.
@@ -872,6 +1144,7 @@ object Downloader {
         failed: Int = 0,
         cancelled: Boolean = false,
         error: String? = null,
+        silent: Boolean = false,
     ) {
         // No early return when already Idle: a cancelled sync reaches here with the state
         // flipped to Idle by whoever cancelled it, and the ongoing notification still
@@ -879,8 +1152,12 @@ object Downloader {
         NotificationUtil.finishPlaylistNotification(downloaded, deleted, failed, cancelled, error)
         // Said once, whatever the outcome. The summary card covers the app, but a sync
         // started from the launcher shortcut never shows it, and the run would otherwise
-        // finish in complete silence.
-        ToastUtil.showToast(syncOutcomeText(downloaded, deleted, failed, cancelled, error))
+        // finish in complete silence. A scheduled run is the exception: it has the
+        // completion notification just below, and nobody is waiting on a toast for work
+        // they did not start.
+        if (!silent) {
+            ToastUtil.showToast(syncOutcomeText(downloaded, deleted, failed, cancelled, error))
+        }
         // A finished run leaves only what still needs attention.
         retainFailedTracks()
         // Publish the outcome for the summary card. This is the in-app replacement for the

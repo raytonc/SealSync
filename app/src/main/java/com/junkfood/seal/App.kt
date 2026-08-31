@@ -21,6 +21,7 @@ import com.google.android.material.color.DynamicColors
 import com.junkfood.seal.ui.common.AudioThumbnailFetcher
 import com.junkfood.seal.ui.common.AudioThumbnailKeyer
 import com.junkfood.seal.util.AUDIO_DIRECTORY
+import com.junkfood.seal.util.AutoSyncWorker
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.SETUP_COMPLETED
 import com.junkfood.seal.util.YOUTUBE_API_KEY
@@ -92,6 +93,13 @@ class App : Application(), ImageLoaderFactory {
 
         if (Build.VERSION.SDK_INT >= 26) NotificationUtil.createNotificationChannel()
 
+        // Reapply the scheduled sync on every start. WorkManager persists its own schedule
+        // across reboots and updates, so this is not what keeps it alive -- it is what
+        // keeps it *correct*: the constraints are derived from preferences that can change
+        // while no scheduling code runs (the cellular switch, most notably), and an
+        // UPDATE-policy enqueue of an unchanged request is a no-op.
+        AutoSyncWorker.reschedule(this)
+
 
         Thread.setDefaultUncaughtExceptionHandler { _, e ->
             startCrashReportActivity(e)
@@ -154,8 +162,27 @@ class App : Application(), ImageLoaderFactory {
             }
         }
 
+        /**
+         * Set while a [com.junkfood.seal.util.AutoSyncWorker] is running the sync.
+         *
+         * A scheduled sync is already foreground work: the worker holds the foreground
+         * slot itself, with its own ongoing notification, because a process woken by
+         * WorkManager in the background is not allowed to call `startForegroundService`
+         * at all from Android 12 onward -- it throws
+         * `ForegroundServiceStartNotAllowedException`. So [Downloader] must not also bind
+         * the service for that run: the bind would crash the sync outright, and if it
+         * somehow succeeded it would post a second ongoing notification for the same work.
+         *
+         * Atomic for the same reason [isServiceRunning] is -- the worker sets it from its
+         * own coroutine while [Downloader]'s state collector reads it from the application
+         * scope.
+         */
+        val isWorkerForeground = AtomicBoolean(false)
+
         /** Binds the download service so a sync survives the app being backgrounded. */
         fun startService() {
+            // The worker is already the foreground host for this run. See above.
+            if (isWorkerForeground.get()) return
             if (!isServiceRunning.compareAndSet(false, true)) return
             val appContext = context.applicationContext
             Intent(appContext, DownloadService::class.java).also { intent ->
