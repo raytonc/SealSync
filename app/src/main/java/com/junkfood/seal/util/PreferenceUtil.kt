@@ -1,5 +1,7 @@
 package com.junkfood.seal.util
 
+import android.net.NetworkCapabilities
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
@@ -153,8 +155,34 @@ object PreferenceUtil {
     fun encodeString(key: String, string: String) = key.updateString(string)
     fun containsKey(key: String) = kv.containsKey(key)
 
-    fun isNetworkAvailableForDownload() =
-        CELLULAR_DOWNLOAD.getBoolean() || !App.connectivityManager.isActiveNetworkMetered
+    /**
+     * Whether a download may start right now: there is a usable connection, and it is
+     * either unmetered or the user has allowed metered downloads.
+     *
+     * The connection check is not redundant. `isActiveNetworkMetered` returns false when
+     * there is no active network at all, so on the old
+     * `CELLULAR_DOWNLOAD || !isActiveNetworkMetered` form airplane mode read as "fine to
+     * download" -- the metered dialog was skipped, a sync claimed the downloader, bound
+     * the foreground service and posted an ongoing notification, and then failed every
+     * listing and surfaced as an abort rather than as "you are offline". The same helper
+     * gates the queue screen's retry-all, where an offline run spends each item's retry
+     * budget on requests that cannot succeed.
+     */
+    fun isNetworkAvailableForDownload(): Boolean {
+        val cm = App.connectivityManager
+        val connected =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // VALIDATED rather than merely connected, so a captive portal or a network
+                // that has not proven it can reach the internet does not count.
+                cm.getNetworkCapabilities(cm.activeNetwork)
+                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+            } else {
+                @Suppress("DEPRECATION")
+                cm.activeNetworkInfo?.isConnected == true
+            }
+        if (!connected) return false
+        return CELLULAR_DOWNLOAD.getBoolean() || !cm.isActiveNetworkMetered
+    }
 
     fun isAutoUpdateEnabled() = AUTO_UPDATE.getBoolean(!isFDroidBuild())
 

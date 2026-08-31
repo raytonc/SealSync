@@ -492,7 +492,13 @@ fun SettingsPage(
                 },
                 title = latestRelease.name.toString(),
                 onConfirmUpdate = {
-                    updateJob.value = scope.launch(Dispatchers.IO) {
+                    // Collected on the main dispatcher, not IO. The Finished branch below
+                    // touches an ActivityResultLauncher and, on the pre-M path,
+                    // startActivity plus a main-thread-only Toast -- none of which may run
+                    // off the main thread. flowOn inside downloadApk already puts the
+                    // network work on IO and only affects the upstream producer, so the
+                    // dispatcher this collector runs on buys nothing but the bug.
+                    updateJob.value = scope.launch {
                         runCatching {
                             UpdateUtil.downloadApk(latestRelease = latestRelease)
                                 .collect { status ->

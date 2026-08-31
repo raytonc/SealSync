@@ -46,7 +46,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.App
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
-import com.junkfood.seal.util.NOTIFICATION
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.updateBoolean
 import com.junkfood.seal.util.PreferenceUtil.updateString
@@ -190,7 +189,17 @@ fun SetupFlowPage(
                     notificationPermission = notificationPermission,
                     onNext = { currentStep = 5 },
                     onSkip = {
-                        NOTIFICATION.updateBoolean(false)
+                        // Deliberately does not write NOTIFICATION=false. Skip on this step
+                        // means "don't ask for the OS permission now", but that write meant
+                        // "never show a completion summary again": it is the only writer of
+                        // the preference in the app, there is no toggle anywhere to set it
+                        // back, and SETUP_COMPLETED stops the wizard from ever returning --
+                        // so granting notifications later from system settings still left
+                        // every sync silent, permanently.
+                        //
+                        // Nothing needs to be recorded here. On API 33+ POST_NOTIFICATIONS
+                        // is the real gate and the user has simply not granted it yet; below
+                        // that, skipping the prompt was never a request to disable anything.
                         currentStep = 5
                     }
                 )

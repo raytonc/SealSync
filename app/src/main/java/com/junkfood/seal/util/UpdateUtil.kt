@@ -272,10 +272,17 @@ object UpdateUtil {
             val minor = matcher.group(2)?.toInt() ?: 0
             val patch = matcher.group(3)?.toInt() ?: 0
             val buildNumber = matcher.group(6)?.toInt() ?: 0
-            when (matcher.group(5)) {
+            // Matched case-insensitively, and an unrecognised suffix is treated as a
+            // pre-release rather than as stable. The `else` branch used to catch "alpha"
+            // -- a tier this project publishes -- and promote it to Stable, which is the
+            // one direction the mistake actually hides updates: a pre-release read as
+            // stable outranks the real release and suppresses it.
+            when (matcher.group(5)?.lowercase()) {
+                "alpha" -> Version.Alpha(major, minor, patch, buildNumber)
                 "beta" -> Version.Beta(major, minor, patch, buildNumber)
                 "rc" -> Version.ReleaseCandidate(major, minor, patch, buildNumber)
-                else -> Version.Stable(major, minor, patch)
+                null -> Version.Stable(major, minor, patch)
+                else -> Version.Alpha(major, minor, patch, buildNumber)
             }
         } else EMPTY_VERSION
     } ?: EMPTY_VERSION
@@ -288,27 +295,60 @@ object UpdateUtil {
         val build: Int = 0
     ) : Comparable<Version> {
         companion object {
+            // Each field gets enough room that the one below it cannot carry into it.
+            //
+            // The previous scheme packed base-100 and gave stable a flat +100 -- exactly
+            // one PATCH unit -- so a stable release landed on the same number as the next
+            // patch's .beta.0: Stable(1,15,1) and Beta(1,15,2,0) both came to 1150200, and
+            // `currentVersion < latestVersion` reads equal as "no update". A build number
+            // of 100 or more carried the same way, so Beta(1,15,1,150) outranked the
+            // stable release it was a beta of.
+            //
+            // Now the pre-release tier is its own field between PATCH and BUILD rather
+            // than a value stolen from PATCH, and BUILD has a thousand slots of its own.
+            // Largest realistic value is around 2e10, against Long.MAX_VALUE of 9.2e18.
             private const val BUILD = 1L
-            private const val PATCH = 100L
-            private const val MINOR = 10_000L
-            private const val MAJOR = 1_000_000L
+            private const val PRE = 1_000L
+            private const val PATCH = 1_000_000L
+            private const val MINOR = 100_000_000L
+            private const val MAJOR = 10_000_000_000L
+
+            // Ordered alpha < beta < rc < stable, spaced so a tier can be inserted later
+            // without renumbering the ones around it.
+            private const val TIER_ALPHA = 100L
+            private const val TIER_BETA = 200L
+            private const val TIER_RC = 300L
+            private const val TIER_STABLE = 900L
         }
 
         abstract fun toNumber(): Long
 
+        /** Shared packing; the tier is the only thing that differs between the subclasses. */
+        protected fun pack(tier: Long): Long =
+            major * MAJOR + minor * MINOR + patch * PATCH + tier * PRE + build * BUILD
+
+        /**
+         * Alphas were previously unparsed: [toVersion]'s `when` handled only "beta" and
+         * "rc", so every `-alpha.N` tag fell to the `else` branch and became a plain
+         * [Stable] -- with the build number dropped by Stable's constructor. Every
+         * v2.0.0-alpha.N therefore compared identical to the finished v2.0.0, and anyone
+         * running an alpha was never offered the release it was leading up to.
+         */
+        class Alpha(versionMajor: Int, versionMinor: Int, versionPatch: Int, versionBuild: Int) :
+            Version(versionMajor, versionMinor, versionPatch, versionBuild) {
+            override fun toNumber(): Long = pack(TIER_ALPHA)
+        }
+
         class Beta(versionMajor: Int, versionMinor: Int, versionPatch: Int, versionBuild: Int) :
             Version(versionMajor, versionMinor, versionPatch, versionBuild) {
-            override fun toNumber(): Long =
-                major * MAJOR + minor * MINOR + patch * PATCH + build * BUILD
-
+            override fun toNumber(): Long = pack(TIER_BETA)
         }
 
         class Stable(versionMajor: Int = 0, versionMinor: Int = 0, versionPatch: Int = 0) :
             Version(versionMajor, versionMinor, versionPatch) {
-            override fun toNumber(): Long =
-                major * MAJOR + minor * MINOR + patch * PATCH + build * BUILD + 100
-            // Prioritize stable versions
-
+            // Highest tier, so a stable release outranks every pre-release of the same
+            // major.minor.patch.
+            override fun toNumber(): Long = pack(TIER_STABLE)
         }
 
         class ReleaseCandidate(
@@ -318,8 +358,7 @@ object UpdateUtil {
             versionBuild: Int
         ) :
             Version(versionMajor, versionMinor, versionPatch, versionBuild) {
-            override fun toNumber(): Long =
-                major * MAJOR + minor * MINOR + patch * PATCH + build * BUILD + 25
+            override fun toNumber(): Long = pack(TIER_RC)
         }
 
         override operator fun compareTo(other: Version): Int =

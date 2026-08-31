@@ -77,7 +77,13 @@ fun HomeEntry() {
     // Normal app flow if setup is completed
     val navController = rememberNavController()
     val context = LocalContext.current
-    var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
+    // Plain remember, matching the release it describes. As rememberSaveable it outlived
+    // the activity recreation that rotation causes -- configChanges lists orientation but
+    // not screenSize, so the activity really is recreated -- while latestRelease beside it
+    // reset to an all-null LatestRelease(). The dialog came back titled "null", with "null"
+    // for release notes, and an Update button that did nothing: downloadApk finds no asset
+    // and returns an empty flow.
+    var showUpdateDialog by remember { mutableStateOf(false) }
     var currentDownloadStatus by remember { mutableStateOf(UpdateUtil.DownloadStatus.NotYet as UpdateUtil.DownloadStatus) }
     val scope = rememberCoroutineScope()
     // Held across recompositions: a plain local was reset to null on every recomposition,
@@ -227,7 +233,10 @@ fun HomeEntry() {
                 },
                 title = latestRelease.name.toString(),
                 onConfirmUpdate = {
-                    updateJob.value = scope.launch(Dispatchers.IO) {
+                    // Main dispatcher: the Finished branch launches the install-permission
+                    // request, which must not be invoked off the main thread. downloadApk
+                    // already carries its own flowOn(Dispatchers.IO) for the network work.
+                    updateJob.value = scope.launch {
                         runCatching {
                             UpdateUtil.downloadApk(latestRelease = latestRelease)
                                 .collect { downloadStatus ->
