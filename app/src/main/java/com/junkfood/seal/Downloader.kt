@@ -256,7 +256,7 @@ object Downloader {
      * the sync body to phrase its abort message.
      *
      * Out-params rather than richer return types because both helpers already use null as
-     * "no result", and only one sync runs at a time -- [isDownloaderAvailable] is what
+     * "no result", and only one sync runs at a time -- [claimDownloader] is what
      * guarantees that, so there is no second run to interleave writes with.
      */
     private var failedPlaylists = 0
@@ -397,8 +397,23 @@ object Downloader {
         }
     }
 
-    private fun isDownloaderAvailable(silent: Boolean = false): Boolean {
-        if (downloaderState.value !is State.Idle) {
+    /**
+     * Takes the downloader for a new run, atomically, or reports that something else has it.
+     *
+     * This used to be a plain `isDownloaderAvailable()` read followed several statements
+     * later by an unconditional write of the running state. Between those two points a
+     * second caller could pass the same check -- the retry button and a scheduled sync
+     * waking at the same moment is the realistic case -- and both would proceed. The
+     * second one's `mutableQueue.update { emptyMap() }` then wiped the rows the first
+     * run's coroutines were reporting into, so every [updateTrack] silently became a no-op
+     * (it returns the map unchanged for a missing key): one run downloaded files while
+     * showing nothing, and both raced to call [finishProcessing].
+     *
+     * [MutableStateFlow.compareAndSet] closes that: the transition out of [State.Idle] is
+     * the claim, so exactly one caller can win it however the two interleave.
+     */
+    private fun claimDownloader(state: State, silent: Boolean = false): Boolean {
+        if (!mutableDownloaderState.compareAndSet(State.Idle, state)) {
             if (!silent) ToastUtil.showToast(context.getString(R.string.task_running))
             return false
         }
@@ -443,7 +458,8 @@ object Downloader {
         // check-then-act: a playlist can be deleted, or a manual sync can start, in the
         // window between them and here. Without honouring silent, that race surfaces as
         // "A sync is already running" popping up over whatever app the user is in.
-        if (!isDownloaderAvailable(silent)) return
+        // The two cheap rejections first: neither depends on owning the downloader, and
+        // failing them should not disturb a run that is already going.
         if (playlists.isEmpty()) {
             if (!silent) ToastUtil.showToast(context.getString(R.string.sync_no_playlists))
             return
@@ -455,6 +471,11 @@ object Downloader {
             return
         }
 
+        // Claim the downloader before touching any shared state. Everything below this
+        // line mutates state a concurrent run would also be using, so it must not run
+        // until this call has established that there is no concurrent run.
+        if (!claimDownloader(State.DownloadingPlaylist(), silent)) return
+
         Log.d(TAG, "syncPlaylists: starting sync for ${playlists.size} playlists")
         // Drop the previous run's error and summary now that a new one is starting.
         clearErrorState()
@@ -464,7 +485,6 @@ object Downloader {
         mutableQueue.update { emptyMap() }
         failedPlaylists = 0
         scanFailure = null
-        mutableDownloaderState.update { State.DownloadingPlaylist() }
 
         applicationScope.launch(Dispatchers.IO) {
             // Counted outside the body so the finally block can report them on every exit
@@ -660,7 +680,7 @@ object Downloader {
                 // Every exit path lands here, so a cancelled or failed run still clears the
                 // notification and returns to Idle. Without this the state stays
                 // DownloadingPlaylist forever, the foreground service is never stopped, and
-                // isDownloaderAvailable() rejects every later sync until the process dies.
+                // claimDownloader() rejects every later sync until the process dies.
                 finishProcessing(
                     downloaded = downloadedCount.get(),
                     deleted = deletedCount,
@@ -691,12 +711,23 @@ object Downloader {
      * as failures are cleared and keeps whatever is still broken.
      */
     fun retryFailedDownloads() {
-        if (!isDownloaderAvailable()) return
+        // Claimed before the queue is even read, unlike syncPlaylists, which can do its
+        // cheap checks first. Here the check itself reads shared state: a snapshot taken
+        // before the claim could be emptied by a sync starting in between, and this run
+        // would then retry rows that no longer exist.
+        //
+        // The itemCount is filled in below once the snapshot is known; what matters at
+        // this point is only that the transition out of Idle has been won.
+        if (!claimDownloader(State.DownloadingPlaylist(phase = Phase.Downloading))) return
 
-        // Snapshot before anything can mutate the map: these are the rows this run owns.
+        // Safe now: nothing else can be mutating the queue behind this.
         val failed = mutableQueue.value.values
             .filter { it.status is TrackDownload.Status.Failed }
         if (failed.isEmpty()) {
+            // Nothing to do after all, so give the downloader straight back. Without this
+            // the claim would strand the state in DownloadingPlaylist with no run behind
+            // it, and every later sync would be rejected until the process died.
+            updateState(State.Idle)
             ToastUtil.showToast(context.getString(R.string.retry_nothing_to_retry))
             return
         }
@@ -713,9 +744,11 @@ object Downloader {
                 } else track
             }
         }
-        // Straight to the downloading phase: there is nothing to fetch, scan or delete.
+        // Now that the snapshot is known, publish how many items this run covers. Already
+        // in the downloading phase from the claim above: there is nothing to fetch, scan
+        // or delete.
         mutableDownloaderState.update {
-            State.DownloadingPlaylist(itemCount = failed.size, phase = Phase.Downloading)
+            if (it is State.DownloadingPlaylist) it.copy(itemCount = failed.size) else it
         }
 
         applicationScope.launch(Dispatchers.IO) {

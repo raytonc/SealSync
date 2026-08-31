@@ -214,8 +214,11 @@ class AutoSyncWorker(
 
             val hours = AUTO_SYNC_INTERVAL_HOURS.getInt().let { stored ->
                 // Guards against a value written by an older build, or a hand-edited store,
-                // landing under WorkManager's 15-minute floor.
-                if (stored in AUTO_SYNC_INTERVALS) stored else AUTO_SYNC_DEFAULT_INTERVAL_HOURS
+                // landing under WorkManager's 15-minute floor. Checked against the same
+                // list the settings screen offers, so an interval the UI cannot label is
+                // also an interval this will not schedule.
+                if (AUTO_SYNC_INTERVALS.any { it.hours == stored }) stored
+                else AUTO_SYNC_DEFAULT_INTERVAL_HOURS
             }
 
             val constraints = Constraints.Builder()

@@ -132,6 +132,11 @@ fun DownloadQueuePage(onNavigateBack: () -> Unit) {
                         // requeued its rows but the state change has not landed yet, the
                         // queue holds Queued rows that are emphatically not failures.
                         failedCount = summary.failed,
+                        // A yt-dlp update also occupies the downloader, so a retry started
+                        // during one is rejected. Better to show the button as unavailable
+                        // than to let it be tapped for a toast explaining why it did not
+                        // work -- and there is nothing to retry when the tally is empty.
+                        enabled = downloaderState is Downloader.State.Idle && summary.failed > 0,
                         onRetry = {
                             view.slightHapticFeedback()
                             Downloader.retryFailedDownloads()
@@ -319,6 +324,7 @@ private fun QueueHeader(
 private fun FailedRunBanner(
     modifier: Modifier = Modifier,
     failedCount: Int,
+    enabled: Boolean = true,
     onRetry: () -> Unit,
 ) {
     Surface(
@@ -354,7 +360,7 @@ private fun FailedRunBanner(
             Spacer(Modifier.width(8.dp))
             // The whole point of keeping these rows around. Retrying them costs a handful
             // of downloads; the alternative the user had was re-running the entire sync.
-            FilledTonalButton(onClick = onRetry) {
+            FilledTonalButton(onClick = onRetry, enabled = enabled) {
                 Icon(
                     imageVector = Icons.Outlined.Refresh,
                     contentDescription = null,

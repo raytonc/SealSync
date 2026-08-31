@@ -1,9 +1,11 @@
 package com.junkfood.seal.util
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import com.google.android.material.color.DynamicColors
 import com.junkfood.seal.App
+import com.junkfood.seal.R
 import com.junkfood.seal.App.Companion.isFDroidBuild
 import com.junkfood.seal.ui.theme.DEFAULT_SEED_COLOR
 import com.kyant.monet.PaletteStyle
@@ -33,7 +35,19 @@ const val AUTO_SYNC_INTERVAL_HOURS = "auto_sync_interval_hours"
 const val AUTO_SYNC_REQUIRES_CHARGING = "auto_sync_requires_charging"
 
 /**
- * The intervals the settings screen offers, in hours.
+ * One cadence the settings screen offers: how many hours, and how to say it.
+ *
+ * The label travels with the value rather than being derived from it at the call site.
+ * Deriving it meant a `when` branching on 24 and 168 in the settings screen -- because
+ * "Every 24 hours" and "Every 168 hours" are both correct and neither is how anyone
+ * describes a schedule -- which split the interval vocabulary across two files: add a
+ * 48-hour option to the list here and the label logic there would silently not know
+ * about it.
+ */
+data class SyncInterval(val hours: Int, @StringRes val labelRes: Int)
+
+/**
+ * The intervals the settings screen offers.
  *
  * Nothing shorter than 6h at the low end and nothing beyond a week at the high end.
  * WorkManager clamps a periodic request to a 15-minute floor anyway, but the floor that
@@ -41,10 +55,22 @@ const val AUTO_SYNC_REQUIRES_CHARGING = "auto_sync_requires_charging"
  * spend minutes downloading, so running it many times a day costs real battery to
  * discover, almost always, that nothing changed.
  */
-val AUTO_SYNC_INTERVALS = listOf(6, 12, 24, 72, 168)
+val AUTO_SYNC_INTERVALS = listOf(
+    SyncInterval(6, R.string.auto_sync_every_6h),
+    SyncInterval(12, R.string.auto_sync_every_12h),
+    SyncInterval(24, R.string.auto_sync_interval_daily),
+    SyncInterval(72, R.string.auto_sync_every_3d),
+    SyncInterval(168, R.string.auto_sync_interval_weekly),
+)
 
 /** Default cadence: once a day. */
 const val AUTO_SYNC_DEFAULT_INTERVAL_HOURS = 24
+
+/** The stored cadence's label, falling back to the default if the stored value is unknown. */
+@StringRes
+fun syncIntervalLabelRes(hours: Int): Int =
+    (AUTO_SYNC_INTERVALS.firstOrNull { it.hours == hours }
+        ?: AUTO_SYNC_INTERVALS.first { it.hours == AUTO_SYNC_DEFAULT_INTERVAL_HOURS }).labelRes
 
 // --- Updates ---
 const val YT_DLP_VERSION = "yt-dlp_init"

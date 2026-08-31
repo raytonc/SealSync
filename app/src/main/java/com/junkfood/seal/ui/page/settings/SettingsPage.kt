@@ -66,6 +66,7 @@ import com.junkfood.seal.util.AUTO_SYNC_ENABLED
 import com.junkfood.seal.util.AUTO_SYNC_INTERVALS
 import com.junkfood.seal.util.AUTO_SYNC_INTERVAL_HOURS
 import com.junkfood.seal.util.AUTO_SYNC_REQUIRES_CHARGING
+import com.junkfood.seal.util.syncIntervalLabelRes
 import com.junkfood.seal.util.AutoSyncWorker
 import com.junkfood.seal.util.CELLULAR_DOWNLOAD
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
@@ -274,7 +275,7 @@ fun SettingsPage(
                         description = if (autoSyncEnabled)
                             stringResource(
                                 R.string.auto_sync_enabled_desc,
-                                intervalLabel(context, autoSyncHours)
+                                stringResource(syncIntervalLabelRes(autoSyncHours))
                             )
                         else
                             stringResource(R.string.auto_sync_enable_desc),
@@ -289,7 +290,7 @@ fun SettingsPage(
 
                     PreferenceItem(
                         title = stringResource(R.string.auto_sync_interval),
-                        description = intervalLabel(context, autoSyncHours),
+                        description = stringResource(syncIntervalLabelRes(autoSyncHours)),
                         icon = Icons.Rounded.Schedule,
                         // Dimmed rather than hidden while off, so the cadence a run would
                         // use is still visible when deciding whether to turn it on.
@@ -623,21 +624,6 @@ fun YouTubeApiKeyDialog(
     )
 }
 
-/**
- * A cadence as a sentence: "Every 12 hours", "Daily", "Weekly".
- *
- * The plain plural reads badly at the two values people actually pick -- "Every 24 hours"
- * and "Every 168 hours" are both technically correct and neither is how anyone describes
- * a schedule -- so those two get their own words.
- */
-private fun intervalLabel(context: Context, hours: Int): String = when (hours) {
-    24 -> context.getString(R.string.auto_sync_interval_daily)
-    168 -> context.getString(R.string.auto_sync_interval_weekly)
-    else -> context.resources.getQuantityString(
-        R.plurals.auto_sync_interval_hours, hours, hours
-    )
-}
-
 /** Picks the cadence. A short fixed list, so radio buttons rather than a slider. */
 @Composable
 private fun SyncIntervalDialog(
@@ -645,27 +631,26 @@ private fun SyncIntervalDialog(
     onDismiss: () -> Unit,
     onSelect: (Int) -> Unit,
 ) {
-    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.auto_sync_interval)) },
         text = {
             Column {
-                AUTO_SYNC_INTERVALS.forEach { hours ->
+                AUTO_SYNC_INTERVALS.forEach { interval ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .selectable(
-                                selected = hours == selectedHours,
+                                selected = interval.hours == selectedHours,
                                 role = Role.RadioButton,
-                                onClick = { onSelect(hours) },
+                                onClick = { onSelect(interval.hours) },
                             )
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(selected = hours == selectedHours, onClick = null)
+                        RadioButton(selected = interval.hours == selectedHours, onClick = null)
                         Spacer(Modifier.size(16.dp))
-                        Text(intervalLabel(context, hours))
+                        Text(stringResource(interval.labelRes))
                     }
                 }
             }

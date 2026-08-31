@@ -95,10 +95,9 @@
     <string name="auto_sync_interval">How often</string>
     <string name="auto_sync_interval_daily">Daily</string>
     <string name="auto_sync_interval_weekly">Weekly</string>
-    <plurals name="auto_sync_interval_hours">
-        <item quantity="one">Every hour</item>
-        <item quantity="other">Every %1$d hours</item>
-    </plurals>
+    <string name="auto_sync_every_6h">Every 6 hours</string>
+    <string name="auto_sync_every_12h">Every 12 hours</string>
+    <string name="auto_sync_every_3d">Every 3 days</string>
     <string name="auto_sync_charging">Only while charging</string>
     <string name="auto_sync_charging_desc">Wait for the charger before starting a scheduled sync</string>
     <string name="auto_sync_note_unmetered">Scheduled syncs run on Wi-Fi only and wait for the battery to be above low. Turn on cellular downloads to allow mobile data. Android decides the exact timing, so a run may start later than the interval.</string>
