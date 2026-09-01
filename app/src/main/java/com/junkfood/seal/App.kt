@@ -1,6 +1,7 @@
 package com.junkfood.seal
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.app.Application
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -13,6 +14,7 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.Process
 import android.util.Log
 import androidx.core.content.getSystemService
 import coil.ImageLoader
@@ -46,6 +48,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.system.exitProcess
 
 @HiltAndroidApp
 class App : Application(), ImageLoaderFactory {
@@ -60,6 +63,15 @@ class App : Application(), ImageLoaderFactory {
         }
         applicationScope = CoroutineScope(SupervisorJob())
         DynamicColors.applyToActivitiesIfAvailable(this)
+
+        // CrashReportActivity runs in its own process (see the manifest) so it can outlive
+        // the kill at the end of the uncaught-exception handler. That process gets its own
+        // Application instance and so runs this method again -- but all it has to render
+        // is a stack trace from an Intent extra plus the theme preferences MMKV has just
+        // loaded. Everything below initialises the *app*: yt-dlp binaries, the WorkManager
+        // schedule, notification channels. Doing any of it here would duplicate work at
+        // best and, at worst, race the main process that is in the middle of dying.
+        if (isCrashReportProcess()) return
 
         clipboard = getSystemService()!!
         connectivityManager = getSystemService()!!
@@ -127,7 +139,40 @@ class App : Application(), ImageLoaderFactory {
 
         Thread.setDefaultUncaughtExceptionHandler { _, e ->
             startCrashReportActivity(e)
+            // Installing a handler replaces the framework's KillApplicationHandler, which
+            // is what normally ends the process on an uncaught exception. Without this the
+            // crashing thread dies but the process lives on: the main looper is gone while
+            // [applicationScope] -- a SupervisorJob, unaffected by the crash -- keeps a
+            // sync downloading, keeps posting to the foreground notification, and keeps
+            // dispatching toasts to a Dispatchers.Main whose thread no longer exists. The
+            // user is left with a frozen MainActivity, a stuck ongoing notification and no
+            // way out but force-stop. The report activity is a separate process-level
+            // task and has already been launched, so it survives this.
+            Process.killProcess(Process.myPid())
+            exitProcess(1)
         }
+    }
+
+    /**
+     * True in the `:crash` process that hosts [CrashReportActivity].
+     *
+     * Android names a non-default process `<package>:<suffix>`, so the check is against
+     * the manifest's `android:process=":crash"`. Application.getProcessName covers API
+     * 28+; below that the name is read from the running-process list, and a null answer
+     * falls back to "this is the main process", which is both the common case and the
+     * safe one -- it initialises too much rather than too little.
+     */
+    private fun isCrashReportProcess(): Boolean {
+        val name = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            getProcessName()
+        } else {
+            val pid = Process.myPid()
+            getSystemService<ActivityManager>()
+                ?.runningAppProcesses
+                ?.firstOrNull { it.pid == pid }
+                ?.processName
+        }
+        return name == "$packageName:crash"
     }
 
     private fun startCrashReportActivity(th: Throwable) {

@@ -38,6 +38,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.App
+import com.junkfood.seal.Downloader
 import com.junkfood.seal.R
 import com.junkfood.seal.ui.common.Route
 import com.junkfood.seal.ui.component.BackButton
@@ -153,15 +155,22 @@ fun SettingsPage(
 
     val scope = rememberCoroutineScope()
     var isUpdating by remember { mutableStateOf(false) }
-    // Remembered state, not a plain local: reading the version goes through the yt-dlp
-    // wrapper to disk, so an unremembered `var` paid for that on every recomposition --
-    // and, worse, the assignment after an update was discarded by the next one, so the row
-    // kept showing the version the screen opened with.
-    var ytdlpVersion by remember {
-        mutableStateOf(
+    // Remembered state, not a plain local: an unremembered `var` had the assignment after
+    // an update discarded by the next recomposition, so the row kept showing the version
+    // the screen opened with. Starts empty and is filled in by the effect below.
+    var ytdlpVersion by remember { mutableStateOf("") }
+    // Read off the main thread: version() goes to disk through the yt-dlp wrapper, and
+    // doing that in the initializer blocked first composition on a cold cache. The row
+    // renders its placeholder for the one frame this takes.
+    LaunchedEffect(Unit) {
+        val read = withContext(Dispatchers.IO) {
             YoutubeDL.getInstance().version(context.applicationContext)
-                ?: context.getString(R.string.ytdlp_update)
-        )
+        }
+        // Guarded: an update that finished first has already written the fresh version,
+        // and this slower initial read must not overwrite it with the stale one.
+        if (ytdlpVersion.isEmpty()) {
+            ytdlpVersion = read ?: context.getString(R.string.ytdlp_update)
+        }
     }
     var audioDirectoryText by remember { mutableStateOf(App.audioDownloadDir) }
 
@@ -385,22 +394,46 @@ fun SettingsPage(
                             }
                         }, onClick = {
                             scope.launch {
-                                runCatching {
-                                    isUpdating = true
-                                    val status = UpdateUtil.updateYtDlp()
-                                    ytdlpVersion =
-                                        YoutubeDL.getInstance().version(context.applicationContext)
-                                            ?: context.getString(R.string.ytdlp_update)
-                                    status
-                                }.onFailure { th ->
-                                    th.printStackTrace()
-                                    ToastUtil.showToast(context.getString(R.string.yt_dlp_update_fail))
-                                }.onSuccess {
-                                    ToastUtil.showToast(
-                                        context.getString(R.string.yt_dlp_up_to_date) + " ($ytdlpVersion)"
-                                    )
+                                // The same claim the automatic update in HomeEntry takes,
+                                // and mandatory for the same reason: updateYoutubeDL
+                                // rewrites the yt-dlp package on disk, and doing that
+                                // underneath a running sync makes its in-flight processes
+                                // fail with import errors that isTransient() does not
+                                // recognise -- so every affected item settles as
+                                // permanently Failed on its first attempt instead of
+                                // being retried.
+                                if (!Downloader.claimForUpdate()) {
+                                    ToastUtil.showToast(context.getString(R.string.task_running))
+                                    return@launch
                                 }
-                                isUpdating = false
+                                isUpdating = true
+                                try {
+                                    runCatching {
+                                        val status = UpdateUtil.updateYtDlp()
+                                        // Off the main thread: this scope is confined to
+                                        // Dispatchers.Main and reading the version goes
+                                        // through the yt-dlp wrapper to disk.
+                                        ytdlpVersion = withContext(Dispatchers.IO) {
+                                            YoutubeDL.getInstance()
+                                                .version(context.applicationContext)
+                                        } ?: context.getString(R.string.ytdlp_update)
+                                        status
+                                    }.onFailure { th ->
+                                        th.printStackTrace()
+                                        ToastUtil.showToast(context.getString(R.string.yt_dlp_update_fail))
+                                    }.onSuccess {
+                                        ToastUtil.showToast(
+                                            context.getString(R.string.yt_dlp_up_to_date) + " ($ytdlpVersion)"
+                                        )
+                                    }
+                                } finally {
+                                    // Released whatever happened, including if this
+                                    // coroutine is cancelled by leaving the screen --
+                                    // stranding the downloader in Updating would have
+                                    // every later sync rejected by a claim nobody holds.
+                                    isUpdating = false
+                                    Downloader.releaseUpdate()
+                                }
                             }
                         }
                     )

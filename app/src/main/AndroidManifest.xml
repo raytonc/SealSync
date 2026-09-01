@@ -54,10 +54,19 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         tools:targetApi="tiramisu">
+        <!--
+            Its own process, because the crash handler that launches it kills the app
+            process straight afterwards: installing a default handler replaces the
+            framework's KillApplicationHandler, and without that kill a crashed app is
+            left with a dead main looper but a live process, still downloading on its
+            application scope. In the shared process this screen would die with that
+            kill; here it outlives it and can show the report.
+        -->
         <activity
             android:name=".CrashReportActivity"
             android:exported="false"
             android:label="CrashReportActivity"
+            android:process=":crash"
             android:theme="@style/Theme.SealSync" />
         <!--
             The subtype property is mandatory alongside specialUse from API 34: a service

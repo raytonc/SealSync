@@ -15,6 +15,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val TAG = "DownloadService"
 
@@ -40,7 +41,7 @@ class DownloadService : Service() {
          *
          * Sized against the same thing [com.junkfood.seal.util.AutoSyncWorker]'s ceiling
          * is: a started run that never finishes must not pin this service foreground for
-         * the life of the process, since [hasStartedWork] is what stops `onUnbind` from
+         * the life of the process, since [outstandingRuns] is what stops `onUnbind` from
          * killing it and nothing else would.
          */
         private const val SYNC_COMPLETION_TIMEOUT_MS = 9 * 60 * 1000L
@@ -48,8 +49,24 @@ class DownloadService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** True once a shortcut-triggered sync is in flight, so unbinding must not kill us. */
-    private var hasStartedWork = false
+    /**
+     * How many shortcut-triggered runs this service is currently hosting.
+     *
+     * A count rather than a flag, and atomic rather than a plain `var`. Two taps of the
+     * launcher shortcut deliver two [onStartCommand] calls to the same service instance,
+     * each launching its own coroutine. With a single boolean, the coroutine that *lost*
+     * the downloader claim still fell through to `hasStartedWork = false; stopSelf()` --
+     * destroying the service, cancelling [serviceScope] and with it the winning
+     * coroutine's wait, and dropping the foreground notification while that run kept
+     * downloading on applicationScope with no foreground host and no protection from the
+     * low-memory killer. Now the loser only decrements, and the service stops when the
+     * last outstanding run has actually finished.
+     *
+     * Atomic because it is written from [serviceScope]'s IO threads and read from the
+     * main thread in [onUnbind]; the plain field it replaces had no happens-before edge
+     * between the two.
+     */
+    private val outstandingRuns = AtomicInteger(0)
 
     override fun onCreate() {
         super.onCreate()
@@ -64,7 +81,7 @@ class DownloadService : Service() {
         Log.d(TAG, "onStartCommand: action=${intent?.action}")
 
         if (intent?.action == ACTION_SYNC_PLAYLISTS) {
-            hasStartedWork = true
+            outstandingRuns.incrementAndGet()
             serviceScope.launch {
                 // The claim is the return value, and it is what decides whether there is
                 // anything here to wait for. Watching the state for a transition out of
@@ -101,9 +118,16 @@ class DownloadService : Service() {
                     Log.d(TAG, "sync not started from service command, nothing to wait for")
                 }
 
-                Log.d(TAG, "sync finished, stopping service")
-                hasStartedWork = false
-                stopSelf()
+                // Only the last run standing stops the service. A coroutine that lost the
+                // claim reaches here immediately, and stopping on its way out would
+                // cancel serviceScope -- and with it the waiting coroutine that actually
+                // owns the run.
+                if (outstandingRuns.decrementAndGet() == 0) {
+                    Log.d(TAG, "sync finished, stopping service")
+                    stopSelf()
+                } else {
+                    Log.d(TAG, "sync finished, another run still outstanding, staying up")
+                }
             }
         }
 
@@ -111,9 +135,9 @@ class DownloadService : Service() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        Log.d(TAG, "onUnbind: hasStartedWork=$hasStartedWork")
+        Log.d(TAG, "onUnbind: outstandingRuns=${outstandingRuns.get()}")
         // A shortcut-triggered sync outlives the binding, so only stop when nothing is running.
-        if (!hasStartedWork) stopSelf()
+        if (outstandingRuns.get() == 0) stopSelf()
         return super.onUnbind(intent)
     }
 

@@ -204,6 +204,27 @@ object Downloader {
         ) : State()
 
         data object Idle : State()
+
+        /**
+         * A cancelled run whose last downloads are still landing.
+         *
+         * [cancelSync] deliberately does not kill the in-flight yt-dlp processes, so the
+         * run keeps writing files and reporting into the queue for a few seconds after
+         * the user taps cancel. Going straight to [Idle] there published "nothing is
+         * running" while that was still false, and since [claimDownloader] only requires
+         * Idle, a second run could take the downloader mid-drain: it cleared the queue
+         * rows the draining run was still reporting into, and when that run's last
+         * download finally landed, its `finally` block tore down the *new* run's
+         * notification, dropped its queued rows and forced the state to Idle -- unbinding
+         * the foreground service underneath a live sync.
+         *
+         * Draining is not [DownloadingPlaylist], so every `!is DownloadingPlaylist` check
+         * that already means "stop, this run was cancelled" keeps working unchanged. It
+         * is not [Idle] either, so the claim stays held until the draining run's own
+         * `finally` releases it.
+         */
+        data object Draining : State()
+
         data object Updating : State()
     }
 
@@ -405,8 +426,12 @@ object Downloader {
      * only now it can be up to [MAX_CONCURRENT_DOWNLOADS] items instead of one.
      */
     fun cancelSync() {
-        if (mutableDownloaderState.value is State.DownloadingPlaylist) {
-            updateState(State.Idle)
+        // Draining rather than Idle: the run still owns the downloader until its finally
+        // block releases it. See [State.Draining] for what handing the claim over
+        // mid-drain used to cost. Read-modify-write in one update so a run finishing on
+        // its own in this instant is not dragged back out of Idle.
+        mutableDownloaderState.update { current ->
+            if (current is State.DownloadingPlaylist) State.Draining else current
         }
     }
 
@@ -1383,9 +1408,10 @@ object Downloader {
         error: String? = null,
         silent: Boolean = false,
     ) {
-        // No early return when already Idle: a cancelled sync reaches here with the state
-        // flipped to Idle by whoever cancelled it, and the ongoing notification still
-        // posted. Both steps below are idempotent, so running them twice is harmless.
+        // No early return on a non-running state: a cancelled sync reaches here in
+        // [State.Draining], with the ongoing notification still posted. Both steps below
+        // are idempotent, so running them twice is harmless. The [updateState] at the end
+        // is what releases the claim the draining run was still holding.
         NotificationUtil.finishPlaylistNotification(downloaded, deleted, failed, cancelled, error)
         // Said once, whatever the outcome. The summary card covers the app, but a sync
         // started from the launcher shortcut never shows it, and the run would otherwise
