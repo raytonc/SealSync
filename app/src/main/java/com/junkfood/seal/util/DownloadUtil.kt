@@ -123,9 +123,23 @@ object DownloadUtil {
             }
         }
 
+    /**
+     * Escapes a value being interpolated into a `--parse-metadata` template.
+     *
+     * The template language reads `%(field)s` as a field reference and `:` as the separator
+     * between the pattern and its destination, so a playlist called "Best of 100%(!)" or
+     * one with a colon in its name would otherwise be parsed as a format string rather than
+     * taken literally, and yt-dlp would either substitute something unexpected or reject
+     * the option outright.
+     */
+    private fun escapeMetadataLiteral(value: String) =
+        value.replace("%", "%%").replace(":", "\\:")
+
     private fun YoutubeDLRequest.addOptionsForAudioDownloads(
         id: String,
         preferences: DownloadPreferences,
+        album: String?,
+        trackNumber: Int?,
     ) = apply {
         addOption("-x")
 
@@ -151,7 +165,19 @@ object DownloadUtil {
         }
 
         addOption("--parse-metadata", "%(release_year,upload_date)s:%(meta_date)s")
-        addOption("--parse-metadata", "%(album,title)s:%(meta_album)s")
+
+        // Album and track number are what a music player sorts a playlist by, and neither
+        // can come from the video itself: a YouTube video has no album, and the download is
+        // addressed by id with --no-playlist, so yt-dlp cannot see the video's position in
+        // any playlist either. The sync knows both -- it listed the playlist in order to
+        // decide this file was missing -- so they are written here as literals.
+        //
+        // The album used to fall back to the video title (`%(album,title)s`), which gave
+        // every single file its own one-track album and made grouping by album meaningless.
+        if (album != null && trackNumber != null) {
+            addOption("--parse-metadata", "${escapeMetadataLiteral(album)}:%(meta_album)s")
+            addOption("--parse-metadata", "$trackNumber:%(meta_track)s")
+        }
     }
 
     /**
@@ -176,6 +202,8 @@ object DownloadUtil {
         videoId: String,
         taskId: String,
         downloadPreferences: DownloadPreferences,
+        album: String? = null,
+        trackNumber: Int? = null,
         progressCallback: ((Float, Long, String) -> Unit)?
     ): Result<List<String>> {
         val request = YoutubeDLRequest(watchUrlFor(videoId)).apply {
@@ -183,7 +211,12 @@ object DownloadUtil {
             addOption("--no-playlist")
             addOption("-f", AUDIO_FORMAT)
             addOption("--concurrent-fragments", CONCURRENT_FRAGMENTS)
-            addOptionsForAudioDownloads(id = videoId, preferences = downloadPreferences)
+            addOptionsForAudioDownloads(
+                id = videoId,
+                preferences = downloadPreferences,
+                album = album,
+                trackNumber = trackNumber,
+            )
             addOption("-P", audioDownloadDir)
             if (Build.VERSION.SDK_INT > 23) addOption("-P", "temp:" + getExternalTempDir())
             addOption("-o", OUTPUT_TEMPLATE_ID)

@@ -37,6 +37,16 @@ val AUDIO_EXTENSIONS =
  */
 val THUMBNAIL_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp")
 
+/**
+ * Prefix on the scratch file a retag writes beside the track it is rewriting.
+ *
+ * Every scan has to skip it. The scratch file keeps the original's name -- extension and
+ * embedded video id included -- so a run interrupted between writing it and renaming it
+ * over the original leaves something a scan would otherwise index as a second file for
+ * that video, which is enough for the delete step to treat one of the pair as a duplicate.
+ */
+const val RETAG_TEMP_PREFIX = ".sealsync-retag-"
+
 data class AudioFileData(
     val uri: Uri,
     val name: String,
@@ -103,7 +113,7 @@ fun scanAudioFilesWithDocumentFile(context: Context, treeUri: Uri): List<AudioFi
 
                 val name = it.getString(nameColumn) ?: continue
                 // Files the user deleted are kept around by the system with this prefix.
-                if (name.startsWith(".trashed-")) continue
+                if (name.startsWith(".trashed-") || name.startsWith(RETAG_TEMP_PREFIX)) continue
                 if (name.substringAfterLast('.', "").lowercase() !in AUDIO_EXTENSIONS) continue
 
                 files.add(
@@ -286,6 +296,33 @@ object FileUtil {
     ).also { it.mkdirs() }
 
     fun writeContentToFile(content: String, file: File): File = file.apply { writeText(content) }
+
+    /**
+     * Resolves an audio file's URI to a path on the filesystem, or null when there is none.
+     *
+     * Needed because ffmpeg is a native binary that takes paths and knows nothing about
+     * content providers -- it cannot be handed a SAF URI. A document URI on primary storage
+     * carries the path in its document id ("primary:Music/foo.opus"), which is enough to
+     * reconstruct it; anything else (an SD card, a cloud provider, a document id in some
+     * other shape) has no filesystem path a binary could open, and returns null so the
+     * caller can skip that file rather than fail the sync over it.
+     */
+    fun resolveRealPath(uri: Uri): File? = runCatching {
+        when (uri.scheme) {
+            "file" -> uri.path?.let(::File)
+            "content" -> {
+                val documentId = DocumentsContract.getDocumentId(uri)
+                if (!documentId.startsWith("primary:")) return@runCatching null
+                val relative = documentId.substringAfter("primary:")
+                File(Environment.getExternalStorageDirectory(), relative)
+            }
+
+            else -> null
+        }
+    }.getOrElse {
+        Log.w(TAG, "resolveRealPath: could not resolve $uri", it)
+        null
+    }
 
     /**
      * Best-effort conversion of a SAF tree URI to a filesystem path, for display and for

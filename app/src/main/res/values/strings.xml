@@ -67,6 +67,7 @@
     <string name="sync_phase_scanning">Scanning your folder</string>
     <string name="sync_phase_deleting">Removing files</string>
     <string name="sync_phase_deleted_detail">%1$d removed so far</string>
+    <string name="sync_phase_tagging">Updating track numbers</string>
     <!-- Post-run summary -->
     <string name="sync_result_up_to_date">Already up to date</string>
     <string name="sync_result_complete">Sync complete</string>

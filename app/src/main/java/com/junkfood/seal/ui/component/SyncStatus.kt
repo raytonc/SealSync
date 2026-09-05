@@ -97,12 +97,14 @@ fun SyncProgressCard(
                     )
                     val deletedText =
                         stringResource(R.string.sync_phase_deleted_detail, deleted)
+                    val taggingText = stringResource(R.string.sync_phase_tagging)
 
                     Text(
                         text = when (phase) {
                             Downloader.Phase.Fetching -> fetchingText
                             Downloader.Phase.Scanning -> scanningText
                             Downloader.Phase.Deleting -> deletingText
+                            Downloader.Phase.Tagging -> taggingText
                             Downloader.Phase.Downloading ->
                                 if (summary.total > 0) progressText else preparingText
                         },

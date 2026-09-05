@@ -11,13 +11,17 @@ import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.App.Companion.startService
 import com.junkfood.seal.App.Companion.stopService
 import com.junkfood.seal.database.objects.PlaylistEntry
+import com.junkfood.seal.database.objects.TrackTag
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.AudioFileData
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.DownloadUtil
+import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.NotificationUtil
+import com.junkfood.seal.util.TagUtil
 import com.junkfood.seal.util.PlaylistResult
+import com.junkfood.seal.util.RETAG_TEMP_PREFIX
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.VideoInfo
@@ -31,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -40,9 +45,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
@@ -182,6 +189,9 @@ object Downloader {
 
         /** Removing local files that no longer belong to any playlist. */
         Deleting,
+
+        /** Rewriting album and track tags on files whose playlist position has changed. */
+        Tagging,
 
         /** Downloading what is missing. The only phase with a per-item queue behind it. */
         Downloading,
@@ -708,6 +718,14 @@ object Downloader {
                     }
                 }
                 deletedCount = deletedFiles
+                // The tag rows for those videos describe files that no longer exist. Left
+                // behind, they would accumulate for the life of the install, and a video
+                // re-added to a playlist later would match a stale row and be skipped by
+                // the retag step while carrying whatever tags it had before.
+                if (filesToDelete.isNotEmpty()) {
+                    runCatching { DatabaseUtil.deleteTrackTags(filesToDelete.keys.toList()) }
+                        .onFailure { Log.e(TAG, "syncPlaylists: could not drop tag rows", it) }
+                }
                 // Published as it lands, so a run whose only work is deletion has something
                 // truthful to show instead of sitting on the "preparing" placeholder.
                 mutableDownloaderState.update {
@@ -719,7 +737,16 @@ object Downloader {
                     )
                 }
 
-                // Step 6: download whatever is still missing.
+                // Step 6: bring tags on files that are already here up to date.
+                //
+                // A file's track number is a property of its playlist, not of the video, so
+                // reordering a playlist invalidates tags on files the sync would otherwise
+                // never look at again -- they are present and correct as far as every other
+                // step is concerned. This is also what backfills a library downloaded before
+                // any track numbers were written.
+                retagDriftedFiles(filesByVideoId, remote.positions)
+
+                // Step 7: download whatever is still missing.
                 val videosToDownload = remote.videos.filterKeys { it !in presentVideoIds }
                 val downloadCount = videosToDownload.size
                 Log.d(
@@ -758,9 +785,33 @@ object Downloader {
                     }
                 }
 
-                val outcome = runDownloads(videosToDownload, preferences)
+                val outcome = runDownloads(
+                    videosToDownload, preferences, positions = remote.positions
+                )
                 downloadedCount.set(outcome.downloaded)
                 failedCount.set(outcome.failed)
+
+                // yt-dlp already wrote the right album and track number into everything that
+                // downloaded, so record that here. Without it the next sync would find no
+                // stored row for these videos, read them as never tagged, and rewrite every
+                // file this run just fetched -- turning the drift check into exactly the
+                // unconditional retag it exists to avoid.
+                if (outcome.downloadedIds.isNotEmpty()) {
+                    val tags = outcome.downloadedIds.mapNotNull { videoId ->
+                        remote.positions[videoId]?.let { position ->
+                            TrackTag(
+                                videoId = videoId,
+                                playlistId = position.playlistId,
+                                album = position.album,
+                                trackNumber = position.trackNumber,
+                            )
+                        }
+                    }
+                    if (tags.isNotEmpty()) {
+                        runCatching { DatabaseUtil.upsertTrackTags(tags) }
+                            .onFailure { Log.e(TAG, "syncPlaylists: could not store tags", it) }
+                    }
+                }
 
                 Log.d(TAG, "syncPlaylists: complete")
                 // The summary card on the home screen reports the counts now; a toast on top
@@ -914,17 +965,43 @@ object Downloader {
     }
 
     /**
+     * Where one video sits in the playlist that owns it, which is what a music player needs
+     * to play a playlist back in its intended order.
+     *
+     * [album] is the owning playlist's title rather than anything from the video: YouTube
+     * videos have no album, and grouping every track of a playlist under one album name is
+     * what lets a player sort within it at all.
+     */
+    private data class TrackPosition(
+        val playlistId: String,
+        val album: String,
+        val trackNumber: Int,
+    )
+
+    /**
      * Every video across every playlist, as videoId -> title.
      *
      * This used to carry the owning playlist URL and the video's 1-based index within it,
      * which existed only to address the video as `--playlist-items N` of that playlist.
-     * Downloads now go straight to the video by id, so the title -- shown while it
-     * downloads -- is all that is left to keep.
+     * Downloads now go straight to the video by id, so that addressing is gone -- but the
+     * position came back for a different reason: it is the track number written into the
+     * file's tags, and nothing else knows it. yt-dlp cannot supply it, because a download
+     * is addressed by video id with `--no-playlist` and never sees a playlist at all.
      */
     private data class RemoteVideos(
         val videos: Map<String, String>,
         /** videoId -> normalized title, for matching files downloaded without an id suffix. */
         val normalizedTitles: Map<String, String>,
+        /**
+         * videoId -> its position in the playlist that owns it.
+         *
+         * A video in several playlists is on disk once and can carry only one album and
+         * track number, so the first playlist that lists it wins and keeps winning: the
+         * owner is recorded in [com.junkfood.seal.database.objects.TrackTag] and compared
+         * against on later syncs, so two playlists containing the same video cannot take
+         * turns retagging the same file on every run.
+         */
+        val positions: Map<String, TrackPosition>,
     )
 
     /**
@@ -981,6 +1058,7 @@ object Downloader {
 
             val videos = mutableMapOf<String, String>()
             val normalizedTitles = mutableMapOf<String, String>()
+            val positions = mutableMapOf<String, TrackPosition>()
             var failures = 0
 
             results.forEach { (entry, result) ->
@@ -988,13 +1066,31 @@ object Downloader {
                     // Counted per playlist, because an empty listing is the dangerous case
                     // below and only this scope knows which playlist it came from.
                     var listed = 0
+                    // Identifies the playlist that owns a video's tags. The stored playlist
+                    // id is preferred over the URL because it survives a URL being re-saved
+                    // in a different form, which would otherwise read as a change of owner
+                    // and retag every one of its files.
+                    val ownerId = entry.playlistId ?: entry.url
                     when (info) {
                         is PlaylistResult -> info.entries.orEmpty().forEach entries@{ item ->
                             val videoId = item.id ?: return@entries
                             val title = item.title.orEmpty()
                             videos[videoId] = title
+                            // Counted before the null check below so a position is the
+                            // video's real place in the playlist, gaps included: a
+                            // deleted or private entry still occupies a slot the user can
+                            // see, and skipping it would shift every later track by one.
                             listed++
                             if (title.isNotEmpty()) normalizedTitles[videoId] = normalizeName(title)
+                            // First playlist to list a video owns it; a later one listing
+                            // the same video leaves the existing entry alone.
+                            positions.getOrPut(videoId) {
+                                TrackPosition(
+                                    playlistId = ownerId,
+                                    album = entry.title,
+                                    trackNumber = listed,
+                                )
+                            }
                         }
 
                         is VideoInfo -> {
@@ -1002,6 +1098,13 @@ object Downloader {
                             listed++
                             info.title.takeIf { it.isNotEmpty() }
                                 ?.let { normalizedTitles[info.id] = normalizeName(it) }
+                            positions.getOrPut(info.id) {
+                                TrackPosition(
+                                    playlistId = ownerId,
+                                    album = entry.title,
+                                    trackNumber = listed,
+                                )
+                            }
                         }
                     }
 
@@ -1038,8 +1141,105 @@ object Downloader {
                 failedPlaylists = failures
                 return@coroutineScope null
             }
-            RemoteVideos(videos, normalizedTitles)
+            RemoteVideos(videos, normalizedTitles, positions)
         }
+
+    /**
+     * Rewrites album and track tags on files whose playlist position no longer matches what
+     * was last written, and records what it wrote.
+     *
+     * Retagging is deliberately not unconditional. ffmpeg cannot rewrite a container's
+     * metadata in place, so every file it touches is read and written in full; doing that
+     * to the whole library on every sync would push gigabytes through flash storage on a
+     * schedule, including on the unattended runs [com.junkfood.seal.util.AutoSyncWorker]
+     * starts. Comparing against the stored tags instead means a steady-state sync -- where
+     * nothing has been reordered -- opens no files at all, and only genuine drift costs
+     * anything.
+     *
+     * The first run after this feature ships is the exception: no file has a stored row, so
+     * every one of them is tagged once. That is the backfill for libraries downloaded when
+     * nothing wrote track numbers.
+     *
+     * Failures here are logged and skipped rather than aborting: a file that cannot be
+     * retagged is still a correct download, and losing the sync over a cosmetic tag would
+     * cost the user the downloads that ran with it.
+     */
+    private suspend fun retagDriftedFiles(
+        filesByVideoId: Map<String, List<AudioFileData>>,
+        positions: Map<String, TrackPosition>,
+    ) {
+        val stored = runCatching { DatabaseUtil.getAllTrackTags() }
+            .getOrElse {
+                Log.e(TAG, "retagDriftedFiles: could not read stored tags, skipping", it)
+                return
+            }
+            .associateBy { it.videoId }
+
+        // Only files that are actually here can be retagged; a video still downloading gets
+        // its tags from yt-dlp at fetch time instead.
+        val drifted = positions.filter { (videoId, position) ->
+            if (!filesByVideoId.containsKey(videoId)) return@filter false
+            val current = stored[videoId]
+            current == null ||
+                    current.playlistId != position.playlistId ||
+                    current.album != position.album ||
+                    current.trackNumber != position.trackNumber
+        }
+
+        if (drifted.isEmpty()) return
+
+        Log.d(TAG, "retagDriftedFiles: ${drifted.size} file(s) need new tags")
+        updatePhase(Phase.Tagging)
+        NotificationUtil.updateServiceNotificationForPhase(Phase.Tagging)
+
+        val written = mutableListOf<TrackTag>()
+        val rescanPaths = mutableListOf<String>()
+
+        withContext(Dispatchers.IO) {
+            drifted.forEach { (videoId, position) ->
+                // Serial rather than concurrent: each retag is bound by reading and writing
+                // one whole file, so running several at once contends for the same storage
+                // instead of overlapping with anything.
+                if (!currentCoroutineContext().isActive) return@withContext
+
+                val files = filesByVideoId[videoId].orEmpty()
+                var taggedAny = false
+                files.forEach files@{ audio ->
+                    val path = FileUtil.resolveRealPath(audio.uri)
+                    if (path == null) {
+                        Log.w(TAG, "retagDriftedFiles: no filesystem path for ${audio.name}")
+                        return@files
+                    }
+                    if (TagUtil.retag(path, position.album, position.trackNumber)) {
+                        taggedAny = true
+                        rescanPaths.add(path.absolutePath)
+                    }
+                }
+
+                // Recorded only when something was actually rewritten, so a file that failed
+                // is retried on the next sync rather than being remembered as done.
+                if (taggedAny) {
+                    written.add(
+                        TrackTag(
+                            videoId = videoId,
+                            playlistId = position.playlistId,
+                            album = position.album,
+                            trackNumber = position.trackNumber,
+                        )
+                    )
+                }
+            }
+        }
+
+        if (written.isNotEmpty()) {
+            runCatching { DatabaseUtil.upsertTrackTags(written) }
+                .onFailure { Log.e(TAG, "retagDriftedFiles: could not store tags", it) }
+        }
+        // Without this the rewritten tags stay invisible to every player on the device,
+        // which would look exactly like the retag not having happened.
+        TagUtil.notifyMediaScanner(context, rescanPaths)
+        Log.d(TAG, "retagDriftedFiles: retagged ${written.size} of ${drifted.size}")
+    }
 
     /** Lists audio files in the configured folder, preferring the SAF tree when set. */
     private fun scanExistingAudioFiles(): List<AudioFileData>? {
@@ -1047,7 +1247,11 @@ object Downloader {
         if (uriString.isNotEmpty()) {
             return runCatching {
                 scanAudioFilesWithDocumentFile(context, Uri.parse(uriString))
-                    .filter { !it.name.startsWith(".trashed-") }
+                    .filter {
+                        !it.name.startsWith(".trashed-") &&
+                        !it.name.startsWith(RETAG_TEMP_PREFIX) &&
+                                !it.name.startsWith(RETAG_TEMP_PREFIX)
+                    }
             }.getOrElse {
                 Log.e(TAG, "scanExistingAudioFiles: SAF scan failed", it)
                 scanFailure = it.message.orEmpty()
@@ -1062,7 +1266,8 @@ object Downloader {
             .filter {
                 it.isFile &&
                         it.extension.lowercase() in AUDIO_EXTENSIONS &&
-                        !it.name.startsWith(".trashed-")
+                        !it.name.startsWith(".trashed-") &&
+                        !it.name.startsWith(RETAG_TEMP_PREFIX)
             }
             .map {
                 AudioFileData(
@@ -1097,7 +1302,15 @@ object Downloader {
             ?: this::class.simpleName.orEmpty()
 
     /** What a download pass managed to do, for the caller's summary. */
-    private data class DownloadOutcome(val downloaded: Int, val failed: Int)
+    private data class DownloadOutcome(
+        val downloaded: Int,
+        val failed: Int,
+        /**
+         * Ids of the items that actually landed, so the caller can record the tags yt-dlp
+         * wrote for them. A count alone cannot say *which* files are now correctly tagged.
+         */
+        val downloadedIds: Set<String> = emptySet(),
+    )
 
     /**
      * How one item ended.
@@ -1132,6 +1345,12 @@ object Downloader {
         items: Map<String, String>,
         preferences: DownloadUtil.DownloadPreferences,
         priorAttempts: Map<String, Int> = emptyMap(),
+        /**
+         * Album and track number to tag each item with as it downloads. Empty for a retry
+         * run, which has no playlist listing behind it -- those items are picked up by the
+         * retag step of the next sync instead.
+         */
+        positions: Map<String, TrackPosition> = emptyMap(),
     ): DownloadOutcome {
         val total = items.size
         // Downloads finish on several coroutines at once, so the tallies are atomic rather
@@ -1141,16 +1360,21 @@ object Downloader {
         val startedItems = AtomicInteger()
         val finishedItems = AtomicInteger()
         val semaphore = Semaphore(MAX_CONCURRENT_DOWNLOADS)
+        // Written from several download coroutines at once, so it cannot be a plain set.
+        val downloadedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
         coroutineScope {
             items.forEach { (videoId, title) ->
                 launch(Dispatchers.IO) {
                     val outcome = downloadWithRetries(
                         videoId, title, preferences, semaphore, total, startedItems,
-                        priorAttempts[videoId] ?: 0,
+                        priorAttempts[videoId] ?: 0, positions[videoId],
                     )
                     when (outcome) {
-                        ItemOutcome.Downloaded -> downloaded.incrementAndGet()
+                        ItemOutcome.Downloaded -> {
+                            downloaded.incrementAndGet()
+                            downloadedIds.add(videoId)
+                        }
                         ItemOutcome.Failed -> failed.incrementAndGet()
                         // Never ran, so it is neither a success nor a failure. Counting a
                         // cancelled item as failed would put the run's own cancellation in
@@ -1183,7 +1407,7 @@ object Downloader {
             }
         }
 
-        return DownloadOutcome(downloaded.get(), failed.get())
+        return DownloadOutcome(downloaded.get(), failed.get(), downloadedIds.toSet())
     }
 
     /**
@@ -1227,6 +1451,7 @@ object Downloader {
         total: Int,
         startedItems: AtomicInteger,
         priorAttempts: Int = 0,
+        position: TrackPosition? = null,
     ): ItemOutcome {
         var attempt = 1
         while (true) {
@@ -1268,11 +1493,11 @@ object Downloader {
                 // instead of racing to total in the first milliseconds. Counted once per
                 // item, not once per attempt -- a retry is the same item having another go.
                 if (attempt == 1) {
-                    val position = startedItems.incrementAndGet()
-                    Log.d(TAG, "downloadWithRetries: [$position/$total] $videoId")
+                    val startIndex = startedItems.incrementAndGet()
+                    Log.d(TAG, "downloadWithRetries: [$startIndex/$total] $videoId")
                 }
 
-                downloadVideo(videoId, title, preferences)
+                downloadVideo(videoId, title, preferences, position)
             }
             result.onSuccess {
                 updateTrack(videoId) { it.copy(status = TrackDownload.Status.Done) }
@@ -1365,6 +1590,7 @@ object Downloader {
         videoId: String,
         title: String,
         preferences: DownloadUtil.DownloadPreferences,
+        position: TrackPosition?,
     ): Result<List<String>> {
         updateTrack(videoId) { it.copy(status = TrackDownload.Status.Downloading()) }
         // Unique per launch, not per video.
@@ -1382,7 +1608,9 @@ object Downloader {
         return DownloadUtil.downloadVideoById(
             videoId = videoId,
             downloadPreferences = preferences,
-            taskId = taskId
+            taskId = taskId,
+            album = position?.album,
+            trackNumber = position?.trackNumber,
         ) { progress, _, line ->
             // Per-item progress goes to the shared service notification counter, not to
             // a notification of its own, so a sync doesn't spam one per video.

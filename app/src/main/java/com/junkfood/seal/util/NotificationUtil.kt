@@ -88,6 +88,7 @@ object NotificationUtil {
             Downloader.Phase.Fetching -> R.string.sync_phase_fetching
             Downloader.Phase.Scanning -> R.string.sync_phase_scanning
             Downloader.Phase.Deleting -> R.string.sync_phase_deleting
+            Downloader.Phase.Tagging -> R.string.sync_phase_tagging
             // Driven by updateServiceNotificationForPlaylist, which has counts to show.
             Downloader.Phase.Downloading -> return
         }

@@ -4,6 +4,7 @@ import androidx.room.Room
 import com.junkfood.seal.App.Companion.context
 import com.junkfood.seal.database.AppDatabase
 import com.junkfood.seal.database.objects.PlaylistEntry
+import com.junkfood.seal.database.objects.TrackTag
 
 object DatabaseUtil {
     private const val DATABASE_NAME = "app_database"
@@ -18,4 +19,8 @@ object DatabaseUtil {
     suspend fun deletePlaylist(playlist: PlaylistEntry) = dao.deletePlaylist(playlist)
     suspend fun findDuplicatePlaylist(url: String, playlistId: String?) =
         dao.findDuplicatePlaylist(url, playlistId)
+
+    suspend fun getAllTrackTags() = dao.getAllTrackTags()
+    suspend fun upsertTrackTags(tags: List<TrackTag>) = dao.upsertTrackTags(tags)
+    suspend fun deleteTrackTags(videoIds: List<String>) = dao.deleteTrackTags(videoIds)
 }
