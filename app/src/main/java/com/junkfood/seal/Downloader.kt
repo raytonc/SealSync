@@ -672,8 +672,14 @@ object Downloader {
                 // with no way to reach them short of deleting by hand.
                 val filesByVideoId = mutableMapOf<String, MutableList<AudioFileData>>()
                 val localBasenames = mutableSetOf<String>()
+                // The same basenames the presence check uses, but keeping the files rather
+                // than only the names: the retag step has to reach a pre-id file, not just
+                // know that one exists.
+                val filesByNormalizedName = mutableMapOf<String, MutableList<AudioFileData>>()
                 existingFiles.forEach { file ->
-                    localBasenames.add(normalizeName(file.name.substringBeforeLast('.')))
+                    val normalized = normalizeName(file.name.substringBeforeLast('.'))
+                    localBasenames.add(normalized)
+                    filesByNormalizedName.getOrPut(normalized) { mutableListOf() }.add(file)
                     VIDEO_ID_PATTERN.find(file.name)?.groupValues?.get(1)?.let {
                         filesByVideoId.getOrPut(it) { mutableListOf() }.add(file)
                     }
@@ -744,7 +750,12 @@ object Downloader {
                 // never look at again -- they are present and correct as far as every other
                 // step is concerned. This is also what backfills a library downloaded before
                 // any track numbers were written.
-                retagDriftedFiles(filesByVideoId, remote.positions)
+                retagDriftedFiles(
+                    filesByVideoId = filesByVideoId,
+                    filesByNormalizedName = filesByNormalizedName,
+                    normalizedTitles = remote.normalizedTitles,
+                    positions = remote.positions,
+                )
 
                 // Step 7: download whatever is still missing.
                 val videosToDownload = remote.videos.filterKeys { it !in presentVideoIds }
@@ -1145,6 +1156,30 @@ object Downloader {
         }
 
     /**
+     * The local files belonging to one video, by whichever of the two routes finds them.
+     *
+     * A sync recognises a file either by the video id embedded in its name or, for files
+     * downloaded before the id was part of the output template, by its normalised title --
+     * and the retag step has to use both for the same reason the presence check does.
+     * Keying it on the id map alone silently skipped every pre-id file, which is exactly
+     * the oldest part of a library and the part most in need of a backfill: no error, no
+     * log line, just nothing done.
+     */
+    private fun filesFor(
+        videoId: String,
+        filesByVideoId: Map<String, List<AudioFileData>>,
+        filesByNormalizedName: Map<String, List<AudioFileData>>,
+        normalizedTitles: Map<String, String>,
+    ): List<AudioFileData> {
+        filesByVideoId[videoId]?.takeIf { it.isNotEmpty() }?.let { return it }
+        val normalized = normalizedTitles[videoId] ?: return emptyList()
+        // Only when the title picks out exactly one file. A title matching several is
+        // ambiguous -- there is nothing to say which of them is this video -- and tagging
+        // the wrong file is worse than leaving both alone for a human to sort out.
+        return filesByNormalizedName[normalized]?.takeIf { it.size == 1 }.orEmpty()
+    }
+
+    /**
      * Rewrites album and track tags on files whose playlist position no longer matches what
      * was last written, and records what it wrote.
      *
@@ -1166,6 +1201,8 @@ object Downloader {
      */
     private suspend fun retagDriftedFiles(
         filesByVideoId: Map<String, List<AudioFileData>>,
+        filesByNormalizedName: Map<String, List<AudioFileData>>,
+        normalizedTitles: Map<String, String>,
         positions: Map<String, TrackPosition>,
     ) {
         val stored = runCatching { DatabaseUtil.getAllTrackTags() }
@@ -1177,8 +1214,18 @@ object Downloader {
 
         // Only files that are actually here can be retagged; a video still downloading gets
         // its tags from yt-dlp at fetch time instead.
+        Log.d(
+            TAG,
+            "retagDriftedFiles: ${positions.size} remote position(s), " +
+                    "${stored.size} stored tag row(s)"
+        )
+
         val drifted = positions.filter { (videoId, position) ->
-            if (!filesByVideoId.containsKey(videoId)) return@filter false
+            if (filesFor(videoId, filesByVideoId, filesByNormalizedName, normalizedTitles)
+                    .isEmpty()
+            ) {
+                return@filter false
+            }
             val current = stored[videoId]
             current == null ||
                     current.playlistId != position.playlistId ||
@@ -1202,7 +1249,8 @@ object Downloader {
                 // instead of overlapping with anything.
                 if (!currentCoroutineContext().isActive) return@withContext
 
-                val files = filesByVideoId[videoId].orEmpty()
+                val files =
+                    filesFor(videoId, filesByVideoId, filesByNormalizedName, normalizedTitles)
                 var taggedAny = false
                 files.forEach files@{ audio ->
                     val path = FileUtil.resolveRealPath(audio.uri)
@@ -1238,7 +1286,18 @@ object Downloader {
         // Without this the rewritten tags stay invisible to every player on the device,
         // which would look exactly like the retag not having happened.
         TagUtil.notifyMediaScanner(context, rescanPaths)
-        Log.d(TAG, "retagDriftedFiles: retagged ${written.size} of ${drifted.size}")
+        // Logged as a mismatch rather than a bare count: a run that finds drift and then
+        // rewrites none of it has failed at something, and the counts are the only way to
+        // tell that from a run that genuinely had nothing to do.
+        if (written.size < drifted.size) {
+            Log.w(
+                TAG,
+                "retagDriftedFiles: retagged only ${written.size} of ${drifted.size} " +
+                        "-- the rest could not be resolved to a file or failed to rewrite"
+            )
+        } else {
+            Log.d(TAG, "retagDriftedFiles: retagged ${written.size} of ${drifted.size}")
+        }
     }
 
     /** Lists audio files in the configured folder, preferring the SAF tree when set. */

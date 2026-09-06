@@ -20,16 +20,29 @@ object TagUtil {
     private const val TAG = "TagUtil"
 
     /**
-     * ffmpeg ships as a native library rather than as an executable, so it lives under the
-     * unpacked package tree the youtubedl-android wrapper maintains rather than anywhere on
-     * a path. [com.yausername.ffmpeg.FFmpeg.init] puts it here, and the app already calls
-     * that during startup, so by the time a sync can run the binary exists.
+     * ffmpeg is shipped as `libffmpeg.so` in the APK's native library directory.
+     *
+     * It is a real executable given a `lib*.so` name so that Android will extract it and
+     * mark it executable the way it does any native library -- a plain binary in assets
+     * would land without the execute bit on modern releases. The system unpacks it per ABI
+     * into [android.content.pm.ApplicationInfo.nativeLibraryDir], which is where it has to
+     * be read from.
+     *
+     * It is deliberately *not* looked up under the package tree
+     * [com.yausername.ffmpeg.FFmpeg.init] unpacks: that archive holds only `usr/lib`, the
+     * shared objects ffmpeg links against, and contains no executable at all. Pointing at
+     * a `usr/bin` inside it finds nothing, and every retag then fails the `canExecute`
+     * check and silently does nothing -- which is exactly what shipped in 1.16.0.
+     *
+     * The libraries in that tree are still needed at run time, which is what
+     * [ffmpegEnvironment] puts on the loader path.
      */
     private val ffmpegBinary: File
-        get() = File(
-            context.noBackupFilesDir,
-            "youtubedl-android/packages/ffmpeg/usr/bin/libffmpeg.so"
-        )
+        get() = File(context.applicationInfo.nativeLibraryDir, "libffmpeg.so")
+
+    /** Where [com.yausername.ffmpeg.FFmpeg.init] unpacks the shared objects ffmpeg needs. */
+    private val ffmpegLibDir: File
+        get() = File(context.noBackupFilesDir, "youtubedl-android/packages/ffmpeg/usr/lib")
 
     /**
      * Retags [file] in place, as far as the caller can tell.
@@ -50,7 +63,11 @@ object TagUtil {
     fun retag(file: File, album: String, trackNumber: Int): Boolean {
         val binary = ffmpegBinary
         if (!binary.canExecute()) {
-            Log.e(TAG, "retag: ffmpeg not available at ${binary.absolutePath}")
+            Log.e(
+                TAG,
+                "retag: ffmpeg is not executable at ${binary.absolutePath} " +
+                        "(exists=${binary.exists()}) -- no file can be retagged"
+            )
             return false
         }
         if (!file.isFile) {
@@ -66,7 +83,7 @@ object TagUtil {
         output.delete()
 
         return try {
-            val process = ProcessBuilder(
+            val builder = ProcessBuilder(
                 binary.absolutePath,
                 "-y",
                 "-i", file.absolutePath,
@@ -81,7 +98,16 @@ object TagUtil {
                 "-metadata", "track=$trackNumber",
                 "-metadata", "TRACKNUMBER=$trackNumber",
                 output.absolutePath,
-            ).redirectErrorStream(true).start()
+            ).redirectErrorStream(true)
+            // ffmpeg links against the shared objects unpacked under the package tree, and
+            // finds none of them without this: it exits immediately with a loader error
+            // rather than doing anything. The native library dir is included too, since
+            // that is where the APK's own copies live.
+            builder.environment()["LD_LIBRARY_PATH"] = listOf(
+                ffmpegLibDir.absolutePath,
+                context.applicationInfo.nativeLibraryDir,
+            ).joinToString(":")
+            val process = builder.start()
 
             // The output has to be drained even though nothing reads it: ffmpeg is chatty
             // on stderr, and a full pipe buffer blocks the process forever rather than
