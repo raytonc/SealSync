@@ -124,16 +124,26 @@ object DownloadUtil {
         }
 
     /**
-     * Escapes a value being interpolated into a `--parse-metadata` template.
+     * Turns [value] into a `--parse-metadata` source that yt-dlp evaluates to exactly
+     * [value].
      *
-     * The template language reads `%(field)s` as a field reference and `:` as the separator
-     * between the pattern and its destination, so a playlist called "Best of 100%(!)" or
-     * one with a colon in its name would otherwise be parsed as a format string rather than
-     * taken literally, and yt-dlp would either substitute something unexpected or reject
-     * the option outright.
+     * - A source matching `[a-zA-Z_]+` is read as a *field name*, not text: a playlist
+     *   called "Favorites" became `%(Favorites)s`, which does not exist, and every file in
+     *   it was tagged with the album "NA". Prefixing an always-empty field reference
+     *   (`%(field|)s` renders its empty default) stops the source ever looking like a bare
+     *   name, and adds nothing to the output.
+     * - `%` starts a field reference, so it is doubled.
+     * - The first `:` not preceded by a backslash separates source from destination, so
+     *   colons are escaped. A trailing backslash would escape that separator too, so an
+     *   empty field reference is appended to keep it away from the colon.
      */
-    private fun escapeMetadataLiteral(value: String) =
-        value.replace("%", "%%").replace(":", "\\:")
+    private fun metadataLiteral(value: String): String {
+        val escaped = value.replace("%", "%%").replace(":", "\\:")
+        val tail = if (escaped.endsWith("\\")) EMPTY_FIELD else ""
+        return EMPTY_FIELD + escaped + tail
+    }
+
+    private const val EMPTY_FIELD = "%(sealsync_literal|)s"
 
     private fun YoutubeDLRequest.addOptionsForAudioDownloads(
         id: String,
@@ -175,7 +185,7 @@ object DownloadUtil {
         // The album used to fall back to the video title (`%(album,title)s`), which gave
         // every single file its own one-track album and made grouping by album meaningless.
         if (album != null && trackNumber != null) {
-            addOption("--parse-metadata", "${escapeMetadataLiteral(album)}:%(meta_album)s")
+            addOption("--parse-metadata", "${metadataLiteral(album)}:%(meta_album)s")
             addOption("--parse-metadata", "$trackNumber:%(meta_track)s")
         }
     }

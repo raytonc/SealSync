@@ -20,52 +20,80 @@ object TagUtil {
     private const val TAG = "TagUtil"
 
     /**
-     * ffmpeg is shipped as `libffmpeg.so` in the APK's native library directory.
+     * Bump when the tags written for an unchanged playlist position change, so that files
+     * whose stored [com.junkfood.seal.database.objects.TrackTag] row is "correct" but whose
+     * actual tags are not get rewritten once.
      *
-     * It is a real executable given a `lib*.so` name so that Android will extract it and
-     * mark it executable the way it does any native library -- a plain binary in assets
-     * would land without the execute bit on modern releases. The system unpacks it per ABI
-     * into [android.content.pm.ApplicationInfo.nativeLibraryDir], which is where it has to
-     * be read from.
-     *
-     * It is deliberately *not* looked up under the package tree
-     * [com.yausername.ffmpeg.FFmpeg.init] unpacks: that archive holds only `usr/lib`, the
-     * shared objects ffmpeg links against, and contains no executable at all. Pointing at
-     * a `usr/bin` inside it finds nothing, and every retag then fails the `canExecute`
-     * check and silently does nothing -- which is exactly what shipped in 1.16.0.
-     *
-     * The libraries in that tree are still needed at run time, which is what
-     * [ffmpegEnvironment] puts on the loader path.
+     * 1 -> 2: 1.16.x stored rows for files it never managed to tag (every ffmpeg retag
+     * failed) and for downloads whose album came out as "NA" (single-word playlist titles
+     * were read by yt-dlp as a field name). Those rows say "done" about wrong files.
      */
-    private val ffmpegBinary: File
-        get() = File(context.applicationInfo.nativeLibraryDir, "libffmpeg.so")
+    const val TAG_FORMAT_VERSION = 2
 
-    /** Where [com.yausername.ffmpeg.FFmpeg.init] unpacks the shared objects ffmpeg needs. */
-    private val ffmpegLibDir: File
-        get() = File(context.noBackupFilesDir, "youtubedl-android/packages/ffmpeg/usr/lib")
+    /**
+     * Tags are written with mutagen, run by the Python interpreter youtubedl-android ships.
+     *
+     * ffmpeg was used before and could not do this job. With `-map 0` it refuses to remux
+     * the embedded cover art into Ogg ("Unsupported codec id") or MP4 ("Tag text
+     * incompatible"), so every retag failed; and for Ogg/Opus it writes `-metadata` to the
+     * container rather than to the audio stream, where players read it, so even a run that
+     * exited cleanly would have changed nothing. mutagen is what yt-dlp itself uses to
+     * embed thumbnails, it is already in the bundled site-packages, and it edits tags
+     * without touching the audio or the artwork.
+     *
+     * The album arrives hex-encoded so no locale or argv decoding on the device can mangle
+     * a non-ASCII playlist title on its way in.
+     */
+    private val RETAG_SCRIPT = """
+        import sys
+        import mutagen
+        from mutagen.id3 import ID3, TALB, TRCK
+        from mutagen.mp4 import MP4Tags
+        path = sys.argv[1]
+        album = bytes.fromhex(sys.argv[2]).decode("utf-8")
+        track = int(sys.argv[3])
+        f = mutagen.File(path)
+        if f is None:
+            sys.exit("unrecognised audio file")
+        if f.tags is None:
+            f.add_tags()
+        t = f.tags
+        if isinstance(t, MP4Tags):
+            t["\xa9alb"] = [album]
+            t["trkn"] = [(track, 0)]
+        elif isinstance(t, ID3):
+            t.setall("TALB", [TALB(encoding=3, text=[album])])
+            t.setall("TRCK", [TRCK(encoding=3, text=[str(track)])])
+        else:
+            t["album"] = [album]
+            t["tracknumber"] = [str(track)]
+        f.save()
+    """.trimIndent()
+
+    /** Same locations [com.yausername.youtubedl_android.YoutubeDL.init] sets up. */
+    private val pythonBinary: File
+        get() = File(context.applicationInfo.nativeLibraryDir, "libpython.so")
+
+    private val packagesDir: File
+        get() = File(context.noBackupFilesDir, "youtubedl-android/packages")
 
     /**
      * Retags [file] in place, as far as the caller can tell.
      *
-     * ffmpeg cannot actually edit a container's metadata where it sits -- it demuxes to a
-     * new file -- so this writes a sibling and swaps it in only once ffmpeg has exited
-     * cleanly and produced something non-empty. A crash, a full disk or a killed process
-     * therefore leaves the original untouched rather than truncated, which matters because
-     * the file being rewritten is the user's only copy of a track that may no longer be
-     * downloadable.
-     *
-     * `-c copy` keeps the audio stream and the embedded artwork exactly as they are: this
-     * is a container rewrite, not a re-encode, so it neither loses quality nor costs the
-     * CPU an encode would. The cost is one full read and one full write of the file.
+     * The tags are written into a copy beside the original, which is swapped in only once
+     * Python has exited cleanly. A crash, a full disk or a killed process therefore leaves
+     * the original untouched rather than half-written, which matters because the file
+     * being rewritten may be the user's only copy of a track that is no longer
+     * downloadable. The cost is one full read and one full write of the file.
      *
      * Returns true only when the swap happened.
      */
     fun retag(file: File, album: String, trackNumber: Int): Boolean {
-        val binary = ffmpegBinary
+        val binary = pythonBinary
         if (!binary.canExecute()) {
             Log.e(
                 TAG,
-                "retag: ffmpeg is not executable at ${binary.absolutePath} " +
+                "retag: python is not executable at ${binary.absolutePath} " +
                         "(exists=${binary.exists()}) -- no file can be retagged"
             )
             return false
@@ -78,45 +106,38 @@ object TagUtil {
         // Same directory as the target: a rename across filesystems is not atomic and the
         // cache dir is not guaranteed to be on the same mount as the music folder.
         val output = File(file.parentFile, "$RETAG_TEMP_PREFIX${file.name}")
-        // A previous run killed mid-write can leave this behind, and ffmpeg refuses to
-        // overwrite silently.
-        output.delete()
 
         return try {
+            file.copyTo(output, overwrite = true)
+
+            val pythonHome = File(packagesDir, "python/usr").absolutePath
             val builder = ProcessBuilder(
                 binary.absolutePath,
-                "-y",
-                "-i", file.absolutePath,
-                "-map", "0",
-                "-c", "copy",
-                // Both spellings are written because the tag's name depends on the
-                // container ffmpeg is muxing: "track" is what ID3 and Vorbis comments take,
-                // "TRACKNUMBER" is what an Ogg/Opus stream expects. Writing the wrong one
-                // for a container is ignored rather than an error, so writing both is what
-                // makes this work across every extension in [AUDIO_EXTENSIONS].
-                "-metadata", "album=$album",
-                "-metadata", "track=$trackNumber",
-                "-metadata", "TRACKNUMBER=$trackNumber",
+                "-c", RETAG_SCRIPT,
                 output.absolutePath,
+                album.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) },
+                trackNumber.toString(),
             ).redirectErrorStream(true)
-            // ffmpeg links against the shared objects unpacked under the package tree, and
-            // finds none of them without this: it exits immediately with a loader error
-            // rather than doing anything. The native library dir is included too, since
-            // that is where the APK's own copies live.
-            builder.environment()["LD_LIBRARY_PATH"] = listOf(
-                ffmpegLibDir.absolutePath,
-                context.applicationInfo.nativeLibraryDir,
-            ).joinToString(":")
+            builder.environment().apply {
+                put(
+                    "LD_LIBRARY_PATH",
+                    listOf("python", "ffmpeg", "aria2c")
+                        .joinToString(":") { File(packagesDir, "$it/usr/lib").absolutePath }
+                )
+                put("PYTHONHOME", pythonHome)
+                put("HOME", pythonHome)
+                put("TMPDIR", context.cacheDir.absolutePath)
+                put("PYTHONUTF8", "1")
+            }
             val process = builder.start()
 
-            // The output has to be drained even though nothing reads it: ffmpeg is chatty
-            // on stderr, and a full pipe buffer blocks the process forever rather than
-            // failing, which would hang the sync instead of just this one file.
+            // Drained even though nothing reads it on success: a full pipe buffer blocks
+            // the process forever rather than failing, which would hang the sync.
             val log = process.inputStream.bufferedReader().use { it.readText() }
             val exit = process.waitFor()
 
             if (exit != 0 || !output.isFile || output.length() == 0L) {
-                Log.e(TAG, "retag: ffmpeg failed for ${file.name} (exit $exit): ${log.takeLast(500)}")
+                Log.e(TAG, "retag: failed for ${file.name} (exit $exit): ${log.takeLast(500)}")
                 output.delete()
                 return false
             }

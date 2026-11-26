@@ -75,6 +75,9 @@ fun syncIntervalLabelRes(hours: Int): Int =
         ?: AUTO_SYNC_INTERVALS.first { it.hours == AUTO_SYNC_DEFAULT_INTERVAL_HOURS }).labelRes
 
 // --- Updates ---
+/** The [TagUtil.TAG_FORMAT_VERSION] the stored TrackTag rows were written under. */
+const val TAG_FORMAT_VERSION_KEY = "tag_format_version"
+
 const val YT_DLP_VERSION = "yt-dlp_init"
 const val YT_DLP_AUTO_UPDATE = "yt-dlp_update"
 const val YT_DLP_UPDATE_CHANNEL = "yt-dlp_update_channel"

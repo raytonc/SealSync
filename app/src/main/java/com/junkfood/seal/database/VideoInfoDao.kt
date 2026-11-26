@@ -37,6 +37,10 @@ interface VideoInfoDao {
     @Upsert
     suspend fun upsertTrackTags(tags: List<TrackTag>)
 
+    /** Forgets every stored tag, so the next sync retags the whole library once. */
+    @Query("DELETE FROM TrackTag")
+    suspend fun clearTrackTags()
+
     /** Drops rows for videos whose files a sync has just deleted. */
     @Query("DELETE FROM TrackTag WHERE videoId IN (:videoIds)")
     suspend fun deleteTrackTags(videoIds: List<String>)

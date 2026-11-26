@@ -23,6 +23,9 @@ import com.junkfood.seal.util.TagUtil
 import com.junkfood.seal.util.PlaylistResult
 import com.junkfood.seal.util.RETAG_TEMP_PREFIX
 import com.junkfood.seal.util.PreferenceUtil.getString
+import com.junkfood.seal.util.PreferenceUtil.getInt
+import com.junkfood.seal.util.PreferenceUtil.updateInt
+import com.junkfood.seal.util.TAG_FORMAT_VERSION_KEY
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.VideoInfo
 import com.junkfood.seal.util.YOUTUBE_API_KEY
@@ -1205,6 +1208,7 @@ object Downloader {
         normalizedTitles: Map<String, String>,
         positions: Map<String, TrackPosition>,
     ) {
+        invalidateStaleTagRows()
         val stored = runCatching { DatabaseUtil.getAllTrackTags() }
             .getOrElse {
                 Log.e(TAG, "retagDriftedFiles: could not read stored tags, skipping", it)
@@ -1298,6 +1302,25 @@ object Downloader {
         } else {
             Log.d(TAG, "retagDriftedFiles: retagged ${written.size} of ${drifted.size}")
         }
+    }
+
+    /**
+     * Drops every stored tag row once when [TagUtil.TAG_FORMAT_VERSION] goes up, so the
+     * next comparison treats the whole library as untagged and rewrites it.
+     *
+     * The rows written before version 2 cannot be trusted: 1.16.x recorded rows for fresh
+     * downloads whose album yt-dlp had written as "NA", and those rows say the file is
+     * already correct. The version is stored only after the clear succeeds, so a failure
+     * here is retried on the next sync instead of being skipped for good.
+     */
+    private suspend fun invalidateStaleTagRows() {
+        if (TAG_FORMAT_VERSION_KEY.getInt(0) >= TagUtil.TAG_FORMAT_VERSION) return
+        runCatching { DatabaseUtil.clearTrackTags() }
+            .onSuccess {
+                TAG_FORMAT_VERSION_KEY.updateInt(TagUtil.TAG_FORMAT_VERSION)
+                Log.d(TAG, "invalidateStaleTagRows: cleared, full retag this run")
+            }
+            .onFailure { Log.e(TAG, "invalidateStaleTagRows: could not clear", it) }
     }
 
     /** Lists audio files in the configured folder, preferring the SAF tree when set. */

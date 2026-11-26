@@ -23,4 +23,5 @@ object DatabaseUtil {
     suspend fun getAllTrackTags() = dao.getAllTrackTags()
     suspend fun upsertTrackTags(tags: List<TrackTag>) = dao.upsertTrackTags(tags)
     suspend fun deleteTrackTags(videoIds: List<String>) = dao.deleteTrackTags(videoIds)
+    suspend fun clearTrackTags() = dao.clearTrackTags()
 }
