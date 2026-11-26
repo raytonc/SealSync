@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.NetworkCell
 import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.AlertDialog
@@ -72,6 +73,7 @@ import com.junkfood.seal.util.AUTO_SYNC_REQUIRES_CHARGING
 import com.junkfood.seal.util.syncIntervalLabelRes
 import com.junkfood.seal.util.AutoSyncWorker
 import com.junkfood.seal.util.CELLULAR_DOWNLOAD
+import com.junkfood.seal.util.MERGED_LIBRARY
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.PreferenceUtil.getInt
 import com.junkfood.seal.util.PreferenceUtil.getString
@@ -189,6 +191,7 @@ fun SettingsPage(
         mutableStateOf(AUTO_SYNC_REQUIRES_CHARGING.getBoolean())
     }
     var showIntervalDialog by remember { mutableStateOf(false) }
+    var mergedLibrary by remember { mutableStateOf(MERGED_LIBRARY.getBoolean()) }
 
     // Read into state rather than straight from MMKV inside the note below. MMKV is not a
     // snapshot source, so a direct read never recomposes -- and this preference is changed
@@ -273,6 +276,18 @@ fun SettingsPage(
                     ) {
                         showChannelHandleDialog = true
                     }
+
+                    // Takes effect on the next sync, which retags every file once.
+                    PreferenceSwitch(
+                        title = stringResource(R.string.merged_library),
+                        description = stringResource(R.string.merged_library_desc),
+                        icon = Icons.Rounded.LibraryMusic,
+                        checked = mergedLibrary,
+                        onCheckedChange = { merged ->
+                            mergedLibrary = merged
+                            MERGED_LIBRARY.updateBoolean(merged)
+                        },
+                    )
                 }
             }
 

@@ -75,6 +75,12 @@ fun syncIntervalLabelRes(hours: Int): Int =
         ?: AUTO_SYNC_INTERVALS.first { it.hours == AUTO_SYNC_DEFAULT_INTERVAL_HOURS }).labelRes
 
 // --- Updates ---
+/**
+ * Tag the whole library as one album numbered straight through, instead of one album per
+ * playlist, so sorting every song by track number plays the playlists in sequence.
+ */
+const val MERGED_LIBRARY = "merged_library"
+
 /** The [TagUtil.TAG_FORMAT_VERSION] the stored TrackTag rows were written under. */
 const val TAG_FORMAT_VERSION_KEY = "tag_format_version"
 
@@ -116,6 +122,7 @@ private val BooleanPreferenceDefaults = mapOf(
     CELLULAR_DOWNLOAD to false,
     AUTO_SYNC_ENABLED to false,
     AUTO_SYNC_REQUIRES_CHARGING to false,
+    MERGED_LIBRARY to false,
     YT_DLP_AUTO_UPDATE to true,
     NOTIFICATION to true,
     SETUP_COMPLETED to false,

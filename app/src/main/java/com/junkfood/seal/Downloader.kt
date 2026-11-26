@@ -26,6 +26,8 @@ import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.getInt
 import com.junkfood.seal.util.PreferenceUtil.updateInt
 import com.junkfood.seal.util.TAG_FORMAT_VERSION_KEY
+import com.junkfood.seal.util.MERGED_LIBRARY
+import com.junkfood.seal.util.PreferenceUtil.getBoolean
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.VideoInfo
 import com.junkfood.seal.util.YOUTUBE_API_KEY
@@ -986,6 +988,10 @@ object Downloader {
      * videos have no album, and grouping every track of a playlist under one album name is
      * what lets a player sort within it at all.
      */
+    /** Album written to every track when [MERGED_LIBRARY] is on. */
+    private const val MERGED_ALBUM_NAME = "SealSync"
+    private const val MERGED_OWNER_ID = "sealsync:merged"
+
     private data class TrackPosition(
         val playlistId: String,
         val album: String,
@@ -1155,8 +1161,37 @@ object Downloader {
                 failedPlaylists = failures
                 return@coroutineScope null
             }
-            RemoteVideos(videos, normalizedTitles, positions)
+            RemoteVideos(
+                videos,
+                normalizedTitles,
+                if (MERGED_LIBRARY.getBoolean()) mergePositions(positions) else positions,
+            )
         }
+
+    /**
+     * Renumbers every track as one album, 1..N straight through, so a player sorting its
+     * whole library by track number plays each playlist in full, one after another.
+     *
+     * [positions] is insertion-ordered: playlists in the order they are listed, each one's
+     * videos in playlist order, and a video shared by two playlists only at its first. So
+     * walking it in order and counting gives that sequence with nothing repeated or
+     * skipped. Track numbers here are a running count of the videos actually present,
+     * not playlist slots, because a gap would break the continuous sequence.
+     *
+     * The owner is a fixed id rather than a playlist, so the drift check in
+     * [retagDriftedFiles] sees every file change owner when this is switched on or off,
+     * and retags the library once.
+     */
+    private fun mergePositions(positions: Map<String, TrackPosition>): Map<String, TrackPosition> {
+        var track = 0
+        return positions.mapValuesTo(LinkedHashMap()) {
+            TrackPosition(
+                playlistId = MERGED_OWNER_ID,
+                album = MERGED_ALBUM_NAME,
+                trackNumber = ++track,
+            )
+        }
+    }
 
     /**
      * The local files belonging to one video, by whichever of the two routes finds them.
