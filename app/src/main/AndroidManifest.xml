@@ -25,6 +25,8 @@
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Background playback. Media3 declares WAKE_LOCK itself for WAKE_MODE_LOCAL. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
 
     <uses-sdk
@@ -152,6 +154,45 @@
         <meta-data
             android:name="android.app.shortcuts"
             android:resource="@xml/shortcuts" />
+
+        <!--
+            Exported because the system media controls, Bluetooth and other controllers
+            bind to it, which is how every Media3 player works. The custom commands that
+            build the queue are only granted to this app's own package (see
+            PlaybackService.onConnect).
+        -->
+        <service
+            android:name=".player.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".player.widget.PlayerWidgetProvider"
+            android:exported="false"
+            android:label="@string/player_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/player_widget_info" />
+        </receiver>
+
+        <!-- Not exported: only the widget's own PendingIntents reach it. -->
+        <receiver
+            android:name=".player.widget.PlayerWidgetReceiver"
+            android:exported="false" />
+
+        <!-- BIND_REMOTEVIEWS keeps anything but the launcher from reading the list. -->
+        <service
+            android:name=".player.widget.PlayerWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
     </application>
 
 </manifest>

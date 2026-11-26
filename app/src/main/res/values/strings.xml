@@ -145,4 +145,27 @@
         <item quantity="one">%1$d failed</item>
         <item quantity="other">%1$d failed</item>
     </plurals>
+    <!-- Player -->
+    <string name="player">Player</string>
+    <string name="player_widget_description">Your library, one row per piece</string>
+    <string name="player_nothing_playing">Nothing playing</string>
+    <string name="player_empty">No downloaded tracks yet</string>
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_next">Next</string>
+    <string name="player_previous">Previous</string>
+    <string name="player_regroup">Regroup with Gemini</string>
+    <string name="player_grouping">Grouping %1$d tracks with Gemini…</string>
+    <string name="player_grouping_failed">Grouping failed: %1$s</string>
+    <string name="player_grouping_no_key">Add a Gemini API key in Settings to group tracks into pieces</string>
+    <string name="player_regroup_started">Regrouping the library</string>
+    <plurals name="player_parts">
+        <item quantity="one">%d part</item>
+        <item quantity="other">%d parts</item>
+    </plurals>
+    <string name="gemini_api_key">Gemini API key</string>
+    <string name="gemini_api_key_desc_set">Configured · %1$s…</string>
+    <string name="gemini_api_key_desc_unset">Optional. Groups movements into pieces in the player</string>
+    <string name="gemini_api_key_dialog_text">Paste a Gemini API key from Google AI Studio. Track titles and artists are sent to Gemini to work out which tracks belong to the same piece.</string>
+    <string name="player_widget_name">SealSync player</string>
 </resources>

@@ -1,5 +1,6 @@
 package com.junkfood.seal
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
@@ -14,14 +15,33 @@ import com.junkfood.seal.ui.common.SettingsProvider
 import com.junkfood.seal.ui.page.HomeEntry
 import com.junkfood.seal.ui.theme.SealTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        /** Opens straight onto the player, from the widget or the media notification. */
+        const val ACTION_OPEN_PLAYER = "com.junkfood.seal.action.OPEN_PLAYER"
+
+        /** Set when a launch asks for the player; the navigation host consumes it. */
+        val openPlayerRequests = MutableStateFlow(false)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_PLAYER) openPlayerRequests.value = true
+    }
 
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) handleIntent(intent)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { v, insets ->
             v.setPadding(0, 0, 0, 0)

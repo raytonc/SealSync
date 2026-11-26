@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.Downloading
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Settings
@@ -127,6 +128,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 fun DownloadPage(
     navigateToSettings: () -> Unit = {},
     navigateToDownloads: () -> Unit = {},
+    navigateToPlayer: () -> Unit = {},
     navigateToQueue: () -> Unit = {},
     playlistViewModel: PlaylistViewModel = hiltViewModel(),
 ) {
@@ -321,6 +323,23 @@ fun DownloadPage(
                                     contentDescription = stringResource(id = R.string.download_queue)
                                 )
                             }
+                        }
+                    }
+                    TooltipBox(
+                        state = rememberTooltipState(),
+                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.player)) } }
+                    ) {
+                        IconButton(
+                            onClick = {
+                                view.slightHapticFeedback()
+                                navigateToPlayer()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.PlayCircle,
+                                contentDescription = stringResource(id = R.string.player)
+                            )
                         }
                     }
                     TooltipBox(

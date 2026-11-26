@@ -1,5 +1,8 @@
 package com.junkfood.seal
 
+import com.junkfood.seal.player.NowPlaying
+import com.junkfood.seal.player.PlayerLibrary
+import com.junkfood.seal.player.widget.PlayerWidgetProvider
 import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.Application
@@ -122,6 +125,12 @@ class App : Application(), ImageLoaderFactory {
         }
 
         if (Build.VERSION.SDK_INT >= 26) NotificationUtil.createNotificationChannel()
+
+        // The widget redraws from in-process state, so it has to hear about every change.
+        PlayerLibrary.onChanged = { PlayerWidgetProvider.refresh(this) }
+        NowPlaying.onChanged = { trackChanged ->
+            PlayerWidgetProvider.refresh(this, listChanged = trackChanged)
+        }
 
         // Reapply the scheduled sync on every start. WorkManager persists its own schedule
         // across reboots (given RECEIVE_BOOT_COMPLETED) and updates, so this is not what

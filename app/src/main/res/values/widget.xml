@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fallback palette. Android 12+ uses the wallpaper colours from values-v31. -->
+    <color name="widget_background">#F21D1B20</color>
+    <color name="widget_text">#FFE6E1E5</color>
+    <color name="widget_text_secondary">#FFCAC4D0</color>
+    <color name="widget_accent">#FFD0BCFF</color>
+    <color name="widget_on_accent">#FF381E72</color>
+    <color name="widget_row_current">#2ED0BCFF</color>
+    <dimen name="widget_corner_radius">24dp</dimen>
+</resources>

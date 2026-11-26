@@ -7,6 +7,7 @@ import androidx.room.Query
 import androidx.room.Update
 import androidx.room.Upsert
 import com.junkfood.seal.database.objects.PlaylistEntry
+import com.junkfood.seal.database.objects.TrackMetadata
 import com.junkfood.seal.database.objects.TrackTag
 import kotlinx.coroutines.flow.Flow
 
@@ -44,4 +45,13 @@ interface VideoInfoDao {
     /** Drops rows for videos whose files a sync has just deleted. */
     @Query("DELETE FROM TrackTag WHERE videoId IN (:videoIds)")
     suspend fun deleteTrackTags(videoIds: List<String>)
+
+    @Query("SELECT * FROM TrackMetadata")
+    suspend fun getAllTrackMetadata(): List<TrackMetadata>
+
+    @Upsert
+    suspend fun upsertTrackMetadata(rows: List<TrackMetadata>)
+
+    @Query("DELETE FROM TrackMetadata WHERE videoId IN (:videoIds)")
+    suspend fun deleteTrackMetadata(videoIds: List<String>)
 }

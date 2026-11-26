@@ -12,6 +12,7 @@ import com.junkfood.seal.App.Companion.startService
 import com.junkfood.seal.App.Companion.stopService
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.database.objects.TrackTag
+import com.junkfood.seal.player.PlayerLibrary
 import com.junkfood.seal.util.AUDIO_DIRECTORY_URI
 import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.AudioFileData
@@ -1772,6 +1773,9 @@ object Downloader {
         // completion toast, which was the only sign a sync had ever finished.
         mutableSyncResult.update { SyncResult(downloaded, deleted, cancelled, failed, error) }
         updateState(State.Idle)
+        // The player's track list and order come from the folder and the tags this run
+        // may have just changed. Reloading also groups any new tracks into pieces.
+        PlayerLibrary.reloadAsync()
         // Deliberately not clearing the error state: any item that failed during the run
         // is the one thing worth showing once it ends. Clearing here wiped the banner
         // before it could render. The next sync clears it on the way in instead.

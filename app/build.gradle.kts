@@ -198,6 +198,11 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.androidxComposeCompiler.get()
     }
+    // Unit tests run on the JVM against stub Android classes. Defaults let code that logs
+    // through android.util.Log run there instead of throwing.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -275,6 +280,10 @@ dependencies {
 
     //WorkManager, for the scheduled background sync
     implementation(libs.androidx.work.runtime)
+
+    //Media3, for the built-in player and its media session
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.session)
 
     //Unit testing libraries
     testImplementation(libs.junit4)

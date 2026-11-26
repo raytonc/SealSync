@@ -23,6 +23,17 @@ const val AUDIO_DIRECTORY = "audio_dir"
 const val AUDIO_DIRECTORY_URI = "audio_dir_uri"
 const val YOUTUBE_API_KEY = "youtube_api_key"
 const val YOUTUBE_CHANNEL_HANDLE = "youtube_channel_handle"
+
+// --- Player ---
+/** Gemini API key, used to group tracks into pieces. Optional: without it nothing collapses. */
+const val GEMINI_API_KEY = "gemini_api_key"
+
+/** Pieces expanded in the player widget, as [com.junkfood.seal.player.Piece.id]s. */
+const val PLAYER_WIDGET_EXPANDED = "player_widget_expanded"
+
+/** Last track played and where in it, so a restarted player picks up where it left off. */
+const val PLAYER_LAST_VIDEO_ID = "player_last_video_id"
+const val PLAYER_LAST_POSITION = "player_last_position"
 const val NOTIFICATION = "notification"
 const val CELLULAR_DOWNLOAD = "cellular_download"
 
@@ -116,6 +127,7 @@ val paletteStyles = listOf(
 private val StringPreferenceDefaults = mapOf(
     YOUTUBE_API_KEY to "",
     YOUTUBE_CHANNEL_HANDLE to "",
+    GEMINI_API_KEY to "",
 )
 
 private val BooleanPreferenceDefaults = mapOf(
@@ -160,6 +172,10 @@ object PreferenceUtil {
     fun String.updateLong(newLong: Long) = kv.encode(this, newLong)
 
     fun String.updateBoolean(newValue: Boolean) = kv.encode(this, newValue)
+
+    fun String.getStringSet(): Set<String> = kv.decodeStringSet(this) ?: emptySet()
+
+    fun String.updateStringSet(values: Set<String>) = kv.encode(this, values)
 
     fun getValue(key: String): Boolean = key.getBoolean()
     fun encodeString(key: String, string: String) = key.updateString(string)

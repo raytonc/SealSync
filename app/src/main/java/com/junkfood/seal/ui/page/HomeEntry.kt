@@ -1,5 +1,7 @@
 package com.junkfood.seal.ui.page
 
+import com.junkfood.seal.MainActivity
+import com.junkfood.seal.ui.page.player.PlayerPage
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -145,6 +147,9 @@ fun HomeEntry() {
                 DownloadPage(
                     navigateToDownloads = { navController.navigate(Route.DOWNLOADS) },
                     navigateToQueue = { navController.navigate(Route.QUEUE) },
+                    navigateToPlayer = {
+                        navController.navigate(Route.PLAYER) { launchSingleTop = true }
+                    },
                     navigateToSettings = {
                         navController.navigate(Route.SETTINGS) {
                             launchSingleTop = true
@@ -154,6 +159,7 @@ fun HomeEntry() {
             }
             animatedComposable(Route.DOWNLOADS) { VideoListPage { onNavigateBack() } }
             animatedComposable(Route.QUEUE) { DownloadQueuePage { onNavigateBack() } }
+            animatedComposable(Route.PLAYER) { PlayerPage { onNavigateBack() } }
             settingsGraph(
                 onNavigateBack = onNavigateBack,
                 onNavigateTo = { route ->
@@ -163,6 +169,14 @@ fun HomeEntry() {
                 }
             )
 
+        }
+
+        // The widget and the media notification open the app on the player.
+        val openPlayer by MainActivity.openPlayerRequests.collectAsStateWithLifecycle()
+        LaunchedEffect(openPlayer) {
+            if (!openPlayer) return@LaunchedEffect
+            MainActivity.openPlayerRequests.value = false
+            navController.navigate(Route.PLAYER) { launchSingleTop = true }
         }
 
         val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()

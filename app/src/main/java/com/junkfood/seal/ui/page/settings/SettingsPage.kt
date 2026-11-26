@@ -84,6 +84,9 @@ import com.junkfood.seal.util.ShortcutUtil
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.UpdateUtil
 import com.junkfood.seal.util.YOUTUBE_API_KEY
+import com.junkfood.seal.util.GEMINI_API_KEY
+import com.junkfood.seal.player.PlayerLibrary
+import androidx.compose.material.icons.outlined.AutoAwesome
 import com.junkfood.seal.util.YOUTUBE_CHANNEL_HANDLE
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
@@ -178,6 +181,9 @@ fun SettingsPage(
 
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var currentApiKey by remember { mutableStateOf(YOUTUBE_API_KEY.getString()) }
+
+    var showGeminiKeyDialog by remember { mutableStateOf(false) }
+    var currentGeminiKey by remember { mutableStateOf(GEMINI_API_KEY.getString()) }
 
     var showChannelHandleDialog by remember { mutableStateOf(false) }
     var currentChannelHandle by remember { mutableStateOf(YOUTUBE_CHANNEL_HANDLE.getString()) }
@@ -288,6 +294,23 @@ fun SettingsPage(
                             MERGED_LIBRARY.updateBoolean(merged)
                         },
                     )
+                }
+            }
+
+            // --- Player: the only setting is the key that lets it group pieces.
+            item { SettingSectionHeader(text = stringResource(R.string.player)) }
+            item {
+                SettingGroup {
+                    PreferenceItem(
+                        title = stringResource(R.string.gemini_api_key),
+                        description = if (currentGeminiKey.isNotEmpty())
+                            stringResource(R.string.gemini_api_key_desc_set, currentGeminiKey.take(6))
+                        else
+                            stringResource(R.string.gemini_api_key_desc_unset),
+                        icon = Icons.Outlined.AutoAwesome,
+                    ) {
+                        showGeminiKeyDialog = true
+                    }
                 }
             }
 
@@ -598,6 +621,21 @@ fun SettingsPage(
             )
         }
 
+        if (showGeminiKeyDialog) {
+            GeminiApiKeyDialog(
+                currentKey = currentGeminiKey,
+                onDismiss = { showGeminiKeyDialog = false },
+                onConfirm = { newKey ->
+                    val changed = newKey != currentGeminiKey
+                    GEMINI_API_KEY.updateString(newKey)
+                    currentGeminiKey = newKey
+                    showGeminiKeyDialog = false
+                    // Groups whatever is still ungrouped now, rather than at the next sync.
+                    if (changed && newKey.isNotEmpty()) PlayerLibrary.reloadAsync()
+                },
+            )
+        }
+
         if (showChannelHandleDialog) {
             YouTubeChannelHandleDialog(
                 onDismiss = { showChannelHandleDialog = false },
@@ -755,5 +793,38 @@ private fun PreferenceInfoNote(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 28.dp, end = 28.dp, top = 8.dp),
+    )
+}
+
+@Composable
+private fun GeminiApiKeyDialog(
+    currentKey: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var apiKey by remember { mutableStateOf(currentKey) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.gemini_api_key)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(R.string.gemini_api_key_dialog_text),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    label = { Text("API Key") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("AIzaSy...") }
+                )
+            }
+        },
+        // Saving an empty key is allowed here: it is how grouping gets switched off.
+        confirmButton = { TextButton(onClick = { onConfirm(apiKey.trim()) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
