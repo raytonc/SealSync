@@ -13,8 +13,11 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.common.MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionCommands
 import androidx.media3.session.SessionResult
@@ -44,7 +47,7 @@ import kotlinx.coroutines.sync.withLock
  * path and neither has to ship hundreds of media items over the session.
  */
 @OptIn(UnstableApi::class)
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
 
     companion object {
         private const val TAG = "PlaybackService"
@@ -69,7 +72,7 @@ class PlaybackService : MediaSessionService() {
     private var tickerJob: Job? = null
 
     private lateinit var player: ExoPlayer
-    private var session: MediaSession? = null
+    private var session: MediaLibrarySession? = null
 
     /** The track ids the player's queue currently holds, in order. */
     private var queuedIds: List<String> = emptyList()
@@ -89,8 +92,7 @@ class PlaybackService : MediaSessionService() {
             .build()
         player.addListener(playerListener)
 
-        session = MediaSession.Builder(this, player)
-            .setCallback(sessionCallback)
+        session = MediaLibrarySession.Builder(this, player, sessionCallback)
             .setSessionActivity(
                 PendingIntent.getActivity(
                     this, 0,
@@ -270,7 +272,36 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private val sessionCallback = object : MediaSession.Callback {
+    /**
+     * A library service rather than a plain session service only so that System UI can
+     * offer to resume playback: its media-resume check connects as a browser and requires
+     * a root. The root is empty; nothing browses this library.
+     */
+    private val sessionCallback = object : MediaLibrarySession.Callback {
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<MediaItem>> = SettableFuture.create<LibraryResult<MediaItem>>().apply {
+            set(
+                LibraryResult.ofItem(
+                    MediaItem.Builder()
+                        .setMediaId("root")
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setIsBrowsable(true)
+                                .setIsPlayable(false)
+                                .setMediaType(MEDIA_TYPE_FOLDER_MIXED)
+                                .build()
+                        )
+                        .build(),
+                    // System UI asks for a "recent" root; returning one is what makes the
+                    // resume card appear.
+                    params,
+                )
+            )
+        }
+
         override fun onConnect(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,

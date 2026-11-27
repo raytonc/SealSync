@@ -8,6 +8,8 @@ data class Track(
     val title: String,
     val artist: String,
     val durationMs: Long,
+    val album: String? = null,
+    val trackNumber: Int = 0,
     /** Grouping from Gemini, or null if the track has not been grouped yet. */
     val pieceKey: String?,
     val pieceTitle: String?,

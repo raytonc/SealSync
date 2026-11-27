@@ -43,8 +43,9 @@ import java.util.UUID
  * widget, so all three show the same list and the same expanded pieces.
  *
  * Play order is the sync's order: playlists in the order they were added, each in its own
- * order, read from the [TrackTag] rows a sync writes. Files with no row yet (downloaded
- * before tagging existed, or not yet retagged) go at the end by title.
+ * order, read from the [TrackTag] rows a sync writes. Files with no row yet (a fresh
+ * install, or tracks a sync has not retagged) are ordered by their album and track-number
+ * tags, which earlier syncs wrote into the files themselves, and then by title.
  */
 object PlayerLibrary {
 
@@ -160,14 +161,20 @@ object PlayerLibrary {
                 title = meta.title,
                 artist = meta.artist,
                 durationMs = meta.durationMs,
+                album = meta.album,
+                trackNumber = meta.trackNumber,
                 pieceKey = meta.pieceKey,
                 pieceTitle = meta.pieceTitle,
                 piecePerformer = meta.piecePerformer,
                 partLabel = meta.partLabel,
             )
         }.sortedWith(
+            // Recorded positions first. Without one, the file's own album and track tags,
+            // which a sync from another install of the app (or an older version) wrote.
             compareBy<Track> { order[it.videoId]?.first ?: Int.MAX_VALUE }
-                .thenBy { order[it.videoId]?.second ?: Int.MAX_VALUE }
+                .thenBy { order[it.videoId]?.second ?: 0 }
+                .thenBy { it.album.orEmpty().lowercase() }
+                .thenBy { if (it.trackNumber > 0) it.trackNumber else Int.MAX_VALUE }
                 .thenBy { it.title.lowercase() }
         )
     }
@@ -234,6 +241,11 @@ object PlayerLibrary {
                 durationMs = retriever
                     .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 0L,
+                album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM),
+                // "433" or "433/464".
+                trackNumber = retriever
+                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                    ?.substringBefore('/')?.trim()?.toIntOrNull() ?: 0,
             )
         } catch (e: Exception) {
             Log.w(TAG, "readOne: could not read tags of ${file.name}", e)
@@ -314,6 +326,8 @@ object PlayerLibrary {
                     title = track.title,
                     artist = track.artist,
                     durationMs = track.durationMs,
+                    album = track.album,
+                    trackNumber = track.trackNumber,
                     pieceKey = key,
                     pieceTitle = a.pieceTitle,
                     piecePerformer = a.performer,

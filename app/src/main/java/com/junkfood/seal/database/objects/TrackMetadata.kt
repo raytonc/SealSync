@@ -1,5 +1,6 @@
 package com.junkfood.seal.database.objects
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -20,6 +21,12 @@ data class TrackMetadata(
     val title: String,
     val artist: String,
     val durationMs: Long,
+    /**
+     * Album and track number as tagged in the file. Order the player falls back to for
+     * files no sync on this install has recorded a playlist position for.
+     */
+    val album: String? = null,
+    @ColumnInfo(defaultValue = "0") val trackNumber: Int = 0,
     val pieceKey: String? = null,
     /** Display name of the piece, e.g. "Beethoven: Violin Concerto". */
     val pieceTitle: String? = null,
