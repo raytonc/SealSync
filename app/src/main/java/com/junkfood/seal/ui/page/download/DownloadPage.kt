@@ -98,6 +98,7 @@ import com.junkfood.seal.R
 import com.junkfood.seal.database.objects.PlaylistEntry
 import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
 import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
+import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.EmptyLibraryState
 import com.junkfood.seal.ui.component.LibraryHeader
 import com.junkfood.seal.ui.component.MissingApiKeyBanner
@@ -126,9 +127,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadPage(
+    onNavigateBack: () -> Unit,
     navigateToSettings: () -> Unit = {},
-    navigateToDownloads: () -> Unit = {},
-    navigateToPlayer: () -> Unit = {},
     navigateToQueue: () -> Unit = {},
     playlistViewModel: PlaylistViewModel = hiltViewModel(),
 ) {
@@ -146,7 +146,6 @@ fun DownloadPage(
 
     var showAddPlaylistDialog by rememberSaveable { mutableStateOf(false) }
     var showChannelPlaylistsDialog by rememberSaveable { mutableStateOf(false) }
-    var showMeteredNetworkDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -182,69 +181,9 @@ fun DownloadPage(
         Downloader.clearSyncResult()
     }
 
-    val checkNetworkOrDownload = {
-        if (!PreferenceUtil.isNetworkAvailableForDownload()) {
-            showMeteredNetworkDialog = true
-        } else {
-            Downloader.syncPlaylists(playlists)
-        }
-    }
-
-    val storagePermission = rememberPermissionState(
-        permission = Manifest.permission.WRITE_EXTERNAL_STORAGE
-    ) { b: Boolean ->
-        if (b) {
-            checkNetworkOrDownload()
-        } else {
-            ToastUtil.makeToast(R.string.permission_denied)
-        }
-    }
-
-    val checkPermissionOrDownload = {
-        if (Build.VERSION.SDK_INT > 29 || storagePermission.status == PermissionStatus.Granted) {
-            checkNetworkOrDownload()
-        } else {
-            storagePermission.launchPermissionRequest()
-        }
-    }
-
-    val downloadAllCallback = downloadAllCallback@{
-        view.slightHapticFeedback()
-        // Tapping the button mid-sync now stops the run instead of doing nothing at all,
-        // which used to read as the app being frozen.
-        if (isSyncing) {
-            Downloader.cancelSync()
-            return@downloadAllCallback
-        }
-        if (playlists.isEmpty()) {
-            scope.launch {
-                snackbarHostState.showSnackbar("Add a playlist first")
-            }
-            return@downloadAllCallback
-        }
-        checkPermissionOrDownload()
-    }
-
-    if (showMeteredNetworkDialog) {
-        MeteredNetworkDialog(
-            onDismissRequest = { showMeteredNetworkDialog = false },
-            onAllowOnceConfirm = {
-                Downloader.syncPlaylists(playlists)
-                showMeteredNetworkDialog = false
-            },
-            onAllowAlwaysConfirm = {
-                // Persist the choice, otherwise "always" behaves the same as "once".
-                CELLULAR_DOWNLOAD.updateBoolean(true)
-                // The scheduled sync derives its network constraint from this same
-                // preference, and an already-enqueued schedule keeps the constraint it was
-                // built with -- so it would stay pinned to unmetered until something else
-                // happened to rebuild it.
-                AutoSyncWorker.applySettingsChange(context)
-                Downloader.syncPlaylists(playlists)
-                showMeteredNetworkDialog = false
-            }
-        )
-    }
+    val downloadAllCallback = rememberSyncAction(
+        onNoPlaylists = { scope.launch { snackbarHostState.showSnackbar("Add a playlist first") } }
+    )
 
     if (showAddPlaylistDialog) {
         AddPlaylistDialog(
@@ -288,95 +227,9 @@ fun DownloadPage(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(text = stringResource(id = R.string.app_name)) },
+                title = { Text(text = stringResource(id = R.string.playlists)) },
+                navigationIcon = { BackButton(onNavigateBack) },
                 scrollBehavior = scrollBehavior,
-                // No navigation icon: this is the root screen, and the leading slot is
-                // where up/back belongs. Both tools live together on the trailing side.
-                actions = {
-                    TooltipBox(
-                        state = rememberTooltipState(),
-                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.download_queue)) } }
-                    ) {
-                        IconButton(
-                            onClick = {
-                                view.slightHapticFeedback()
-                                navigateToQueue()
-                            }
-                        ) {
-                            // Badged while a run is going, so the queue is findable without
-                            // having to guess that anything is happening behind this icon.
-                            BadgedBox(
-                                badge = {
-                                    // Only once there is a queue to badge. The earlier
-                                    // phases have nothing downloading, and a badge reading
-                                    // "0" says the run is idle when it is not.
-                                    if (isSyncing && queueSummary.downloading > 0) {
-                                        Badge {
-                                            Text(text = queueSummary.downloading.toString())
-                                        }
-                                    }
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Downloading,
-                                    contentDescription = stringResource(id = R.string.download_queue)
-                                )
-                            }
-                        }
-                    }
-                    TooltipBox(
-                        state = rememberTooltipState(),
-                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.player)) } }
-                    ) {
-                        IconButton(
-                            onClick = {
-                                view.slightHapticFeedback()
-                                navigateToPlayer()
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.PlayCircle,
-                                contentDescription = stringResource(id = R.string.player)
-                            )
-                        }
-                    }
-                    TooltipBox(
-                        state = rememberTooltipState(),
-                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.downloads_history)) } }
-                    ) {
-                        IconButton(
-                            onClick = {
-                                view.slightHapticFeedback()
-                                navigateToDownloads()
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.LibraryMusic,
-                                contentDescription = stringResource(id = R.string.downloads_history)
-                            )
-                        }
-                    }
-                    TooltipBox(
-                        state = rememberTooltipState(),
-                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                        tooltip = { PlainTooltip { Text(text = stringResource(id = R.string.settings)) } }
-                    ) {
-                        IconButton(
-                            onClick = {
-                                view.slightHapticFeedback()
-                                navigateToSettings()
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Settings,
-                                contentDescription = stringResource(id = R.string.settings)
-                            )
-                        }
-                    }
-                }
             )
         },
         floatingActionButton = {

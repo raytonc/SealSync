@@ -19,6 +19,29 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.QueueMusic
+import androidx.compose.material.icons.outlined.Downloading
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalView
+import com.junkfood.seal.Downloader
+import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
+import com.junkfood.seal.ui.component.SyncProgressCard
+import com.junkfood.seal.ui.component.SyncSummaryCard
+import com.junkfood.seal.ui.page.download.rememberSyncAction
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -67,17 +90,46 @@ import com.junkfood.seal.player.PlayerRow
 import com.junkfood.seal.player.buildRows
 import com.junkfood.seal.player.formatDuration
 import com.junkfood.seal.ui.common.AsyncImageImpl
-import com.junkfood.seal.ui.component.BackButton
-import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.util.ToastUtil
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlayerPage(onNavigateBack: () -> Unit) {
+fun PlayerPage(
+    navigateToPlaylists: () -> Unit,
+    navigateToQueue: () -> Unit,
+    navigateToSettings: () -> Unit,
+) {
     val context = LocalContext.current
+    val view = LocalView.current
     val library by PlayerLibrary.state.collectAsStateWithLifecycle()
     val expanded by PlayerLibrary.expanded.collectAsStateWithLifecycle()
     val status by NowPlaying.status.collectAsStateWithLifecycle()
+
+    val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
+    val queueSummary by Downloader.queueSummary.collectAsStateWithLifecycle()
+    val activeTitles by Downloader.activeTitles.collectAsStateWithLifecycle()
+    val syncResult by Downloader.syncResult.collectAsStateWithLifecycle()
+    val runState = downloaderState as? Downloader.State.DownloadingPlaylist
+    val isSyncing = runState != null
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val noPlaylistsText = stringResource(R.string.player_no_playlists)
+    val addText = stringResource(R.string.player_add_playlists)
+    val sync = rememberSyncAction(onNoPlaylists = {
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(noPlaylistsText, actionLabel = addText)
+            if (result == SnackbarResult.ActionPerformed) navigateToPlaylists()
+        }
+    })
+
+    // A clean result clears itself after a moment; a failed one waits to be dismissed.
+    LaunchedEffect(syncResult) {
+        val result = syncResult ?: return@LaunchedEffect
+        if (result.error != null) return@LaunchedEffect
+        delay(6000)
+        Downloader.clearSyncResult()
+    }
 
     LaunchedEffect(Unit) { PlayerLibrary.ensureLoaded() }
 
@@ -92,34 +144,116 @@ fun PlayerPage(onNavigateBack: () -> Unit) {
         if (index > 0) listState.scrollToItem(index)
     }
 
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    // Expanding a piece brings its header to the top, so its parts fill the screen.
+    // Keyed on the open piece, so collapsing leaves the list where it is.
+    val openPiece = expanded.firstOrNull()
+    LaunchedEffect(openPiece) {
+        val id = openPiece ?: return@LaunchedEffect
+        val index = rows.indexOfFirst { it is PlayerRow.Header && it.piece.id == id }
+        if (index >= 0) listState.animateScrollToItem(index)
+    }
+
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    var menuOpen by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            LargeTopAppBar(
-                title = { Text(stringResource(R.string.player)) },
-                navigationIcon = { BackButton(onNavigateBack) },
+            TopAppBar(
+                title = { Text(stringResource(R.string.app_name)) },
+                scrollBehavior = scrollBehavior,
                 actions = {
-                    IconButton(onClick = { PlayerLibrary.reloadAsync() }) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "Rescan")
-                    }
                     IconButton(onClick = {
-                        PlayerLibrary.regroup()
-                        ToastUtil.makeToast(context.getString(R.string.player_regroup_started))
+                        view.slightHapticFeedback()
+                        navigateToPlaylists()
                     }) {
                         Icon(
-                            Icons.Outlined.AutoAwesome,
-                            contentDescription = stringResource(R.string.player_regroup)
+                            Icons.AutoMirrored.Outlined.QueueMusic,
+                            contentDescription = stringResource(R.string.playlists),
                         )
                     }
+                    IconButton(onClick = sync) {
+                        if (isSyncing) {
+                            // The spinner doubles as the stop button while a run is going.
+                            Box(contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Icon(
+                                    Icons.Rounded.Close,
+                                    contentDescription = stringResource(R.string.queue_cancel_sync),
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            }
+                        } else {
+                            Icon(
+                                Icons.Outlined.Sync,
+                                contentDescription = stringResource(R.string.player_sync),
+                            )
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(
+                                Icons.Outlined.MoreVert,
+                                contentDescription = stringResource(R.string.player_more),
+                            )
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.download_queue)) },
+                                leadingIcon = { Icon(Icons.Outlined.Downloading, null) },
+                                onClick = { menuOpen = false; navigateToQueue() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.player_regroup)) },
+                                leadingIcon = { Icon(Icons.Outlined.AutoAwesome, null) },
+                                onClick = {
+                                    menuOpen = false
+                                    PlayerLibrary.regroup()
+                                    ToastUtil.makeToast(context.getString(R.string.player_regroup_started))
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.player_rescan)) },
+                                leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
+                                onClick = { menuOpen = false; PlayerLibrary.reloadAsync() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.settings)) },
+                                leadingIcon = { Icon(Icons.Outlined.Settings, null) },
+                                onClick = { menuOpen = false; navigateToSettings() },
+                            )
+                        }
+                    }
                 },
-                scrollBehavior = scrollBehavior,
             )
         },
         bottomBar = { NowPlayingBar(status = status) },
     ) { padding ->
         Column(Modifier.padding(padding)) {
+            AnimatedVisibility(visible = isSyncing) {
+                SyncProgressCard(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    summary = queueSummary,
+                    phase = runState?.phase ?: Downloader.Phase.Fetching,
+                    deleted = runState?.deleted ?: 0,
+                    activeTitles = activeTitles,
+                    onCancel = { Downloader.cancelSync() },
+                    onOpenQueue = navigateToQueue,
+                )
+            }
+            AnimatedVisibility(visible = syncResult != null && !isSyncing) {
+                syncResult?.let { result ->
+                    SyncSummaryCard(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        result = result,
+                        onDismiss = { Downloader.clearSyncResult() },
+                    )
+                }
+            }
             GroupingBanner(library.grouping)
             if (rows.isEmpty() && (!library.loaded || library.loading)) {
                 // The first load reads the tags of every file, which takes a few seconds.

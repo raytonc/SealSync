@@ -22,7 +22,6 @@
     <string name="ytdlp_update_action">Update yt-dlp</string>
     <string name="confirm">Confirm</string>
     <string name="dismiss">Cancel</string>
-    <string name="downloads_history">Downloads</string>
     <string name="about">About</string>
     <string name="back">Back</string>
     <string name="readme_desc">Check the GitHub repository and the README</string>
@@ -168,4 +167,10 @@
     <string name="gemini_api_key_desc_unset">Optional. Groups movements into pieces in the player</string>
     <string name="gemini_api_key_dialog_text">Paste a Gemini API key from Google AI Studio. Track titles and artists are sent to Gemini to work out which tracks belong to the same piece.</string>
     <string name="player_widget_name">SealSync player</string>
+    <string name="playlists">Playlists</string>
+    <string name="player_sync">Sync playlists</string>
+    <string name="player_more">More options</string>
+    <string name="player_rescan">Rescan folder</string>
+    <string name="player_no_playlists">No playlists to sync yet</string>
+    <string name="player_add_playlists">Add</string>
 </resources>

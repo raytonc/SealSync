@@ -42,7 +42,6 @@ import com.junkfood.seal.ui.page.queue.DownloadQueuePage
 import com.junkfood.seal.ui.page.settings.SettingsPage
 import com.junkfood.seal.ui.page.settings.about.CreditsPage
 import com.junkfood.seal.ui.page.setup.SetupFlowPage
-import com.junkfood.seal.ui.page.videolist.VideoListPage
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.SETUP_COMPLETED
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
@@ -143,23 +142,31 @@ fun HomeEntry() {
             navController = navController,
             startDestination = Route.HOME
         ) {
+            // The player is home. Syncing sits in its top bar; playlists, the queue and
+            // settings are pages reached from there.
             animatedComposable(Route.HOME) {
-                DownloadPage(
-                    navigateToDownloads = { navController.navigate(Route.DOWNLOADS) },
-                    navigateToQueue = { navController.navigate(Route.QUEUE) },
-                    navigateToPlayer = {
-                        navController.navigate(Route.PLAYER) { launchSingleTop = true }
+                PlayerPage(
+                    navigateToPlaylists = {
+                        navController.navigate(Route.PLAYLISTS) { launchSingleTop = true }
+                    },
+                    navigateToQueue = {
+                        navController.navigate(Route.QUEUE) { launchSingleTop = true }
                     },
                     navigateToSettings = {
-                        navController.navigate(Route.SETTINGS) {
-                            launchSingleTop = true
-                        }
+                        navController.navigate(Route.SETTINGS) { launchSingleTop = true }
                     },
                 )
             }
-            animatedComposable(Route.DOWNLOADS) { VideoListPage { onNavigateBack() } }
+            animatedComposable(Route.PLAYLISTS) {
+                DownloadPage(
+                    onNavigateBack = onNavigateBack,
+                    navigateToQueue = { navController.navigate(Route.QUEUE) },
+                    navigateToSettings = {
+                        navController.navigate(Route.SETTINGS) { launchSingleTop = true }
+                    },
+                )
+            }
             animatedComposable(Route.QUEUE) { DownloadQueuePage { onNavigateBack() } }
-            animatedComposable(Route.PLAYER) { PlayerPage { onNavigateBack() } }
             settingsGraph(
                 onNavigateBack = onNavigateBack,
                 onNavigateTo = { route ->
@@ -176,7 +183,7 @@ fun HomeEntry() {
         LaunchedEffect(openPlayer) {
             if (!openPlayer) return@LaunchedEffect
             MainActivity.openPlayerRequests.value = false
-            navController.navigate(Route.PLAYER) { launchSingleTop = true }
+            navController.popBackStack(Route.HOME, inclusive = false)
         }
 
         val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()

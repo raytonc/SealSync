@@ -56,6 +56,44 @@ class PlayerWidgetProvider : AppWidgetProvider() {
             refreshArt(context, manager, ids)
         }
 
+        /** List row height and the space above the list, from the widget layouts. */
+        private const val ROW_HEIGHT_DP = 52
+        private const val CHROME_HEIGHT_DP = 84
+
+        private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        /**
+         * Scrolls every placed widget's list so row [position] sits at the top.
+         *
+         * A widget can only ask its list to bring a row into view, which puts a row below
+         * the viewport at the bottom rather than the top. So this goes in two steps: bring
+         * the row into view, then bring the row one screen below it into view, which
+         * scrolls down until [position] is the top row. The screen size comes from the
+         * widget's current height.
+         */
+        fun scrollTo(context: Context, position: Int, rowCount: Int) {
+            val ids = ids(context)
+            if (ids.isEmpty()) return
+            val manager = AppWidgetManager.getInstance(context)
+            ids.forEach { id ->
+                val first = RemoteViews(context.packageName, R.layout.widget_player)
+                first.setScrollPosition(R.id.widget_list, position)
+                manager.partiallyUpdateAppWidget(id, first)
+
+                val heightDp = manager.getAppWidgetOptions(id)
+                    .getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT)
+                val visibleRows = ((heightDp - CHROME_HEIGHT_DP) / ROW_HEIGHT_DP).coerceAtLeast(1)
+                val target = (position + visibleRows - 1).coerceAtMost(rowCount - 1)
+                if (target <= position) return@forEach
+                // After the first scroll has settled, or the two would cancel each other.
+                mainHandler.postDelayed({
+                    val second = RemoteViews(context.packageName, R.layout.widget_player)
+                    second.setScrollPosition(R.id.widget_list, target)
+                    manager.partiallyUpdateAppWidget(id, second)
+                }, 400)
+            }
+        }
+
         fun ids(context: Context): IntArray =
             AppWidgetManager.getInstance(context)
                 .getAppWidgetIds(ComponentName(context, PlayerWidgetProvider::class.java))

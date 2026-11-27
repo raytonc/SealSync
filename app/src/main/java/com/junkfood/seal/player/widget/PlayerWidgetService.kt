@@ -23,6 +23,9 @@ class PlayerWidgetService : RemoteViewsService() {
     private class Factory(private val context: Context) : RemoteViewsFactory {
 
         private var snapshot: List<PlayerRow> = emptyList()
+
+        /** The piece that was open after the last redraw, to notice a new one opening. */
+        private var lastOpen: String? = PlayerLibrary.expanded.value.firstOrNull()
         private var currentId: String? = null
 
         override fun onCreate() = Unit
@@ -32,6 +35,20 @@ class PlayerWidgetService : RemoteViewsService() {
             runCatching { runBlocking { PlayerLibrary.ensureLoaded() } }
             snapshot = buildRows(PlayerLibrary.state.value.pieces, PlayerLibrary.expanded.value)
             currentId = NowPlaying.status.value.videoId
+
+            // A piece that has just been opened scrolls to the top of the list. This is
+            // the only point where the new rows are known to be in place, so the scroll is
+            // issued from here rather than from the tap, which would aim at the old list.
+            val open = PlayerLibrary.expanded.value.firstOrNull()
+            if (open != null && open != lastOpen) {
+                val position = snapshot.indexOfFirst {
+                    it is PlayerRow.Header && it.piece.id == open
+                }
+                if (position >= 0) {
+                    PlayerWidgetProvider.scrollTo(context, position, snapshot.size)
+                }
+            }
+            lastOpen = open
         }
 
         override fun onDestroy() {
