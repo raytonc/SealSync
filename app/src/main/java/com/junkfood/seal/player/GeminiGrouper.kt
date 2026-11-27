@@ -43,6 +43,14 @@ object GeminiGrouper {
         "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent"
 
     /**
+     * Bump when [INSTRUCTIONS] changes what a grouping looks like, so libraries grouped
+     * under the old prompt are regrouped once.
+     *
+     * 1 -> 2: performers are full names instead of surnames.
+     */
+    const val PROMPT_VERSION = 2
+
+    /**
      * Tracks per request. Large enough that a typical library goes in one request, which
      * matters: a piece cut in two by a chunk boundary can only be rejoined by matching
      * titles. 800 tracks is roughly 25k output tokens, well inside Flash's limit.
@@ -102,8 +110,10 @@ object GeminiGrouper {
           then the work with enough number, key or catalogue to identify it, for example
           "Beethoven: Violin Concerto in D, Op. 61" or "Bach: Goldberg Variations".
           For a one-track song, the song title.
-        - "performer": the main performer's surname, or two at most, for example "Hahn"
-          or "Perlman, Giulini". For songs, the artist.
+        - "performer": the performers' full names as they appear in the artist field,
+          soloist first, then orchestra and conductor, for example "Hilary Hahn, Esa-Pekka
+          Salonen, Swedish Radio Symphony Orchestra" or "Glenn Gould". Leave out the
+          composer. For songs, the artist.
         - "part": for multi-track pieces, the track's part within the piece, for example
           "I. Allegro ma non troppo", "Var. 12", "Prelude No. 4 in C-sharp minor". Keep
           the original wording, minus what the title already says. For one-track pieces,

@@ -7,11 +7,17 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.TypedValue
+import android.view.View
 import android.widget.RemoteViews
+import com.junkfood.seal.App
 import com.junkfood.seal.MainActivity
 import com.junkfood.seal.R
+import com.junkfood.seal.player.Artwork
 import com.junkfood.seal.player.NowPlaying
 import com.junkfood.seal.player.PlayerLibrary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * The home-screen player: what is playing, transport controls, and the library as one
@@ -25,13 +31,12 @@ class PlayerWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         ids.forEach { manager.updateAppWidget(it, build(context, it)) }
+        refreshArt(context, manager, ids)
         @Suppress("DEPRECATION")
         manager.notifyAppWidgetViewDataChanged(ids, R.id.widget_list)
     }
 
     companion object {
-
-        private var lastScrolledTo: String? = null
 
         fun ids(context: Context): IntArray =
             AppWidgetManager.getInstance(context)
@@ -46,24 +51,36 @@ class PlayerWidgetProvider : AppWidgetProvider() {
             if (ids.isEmpty()) return
             val manager = AppWidgetManager.getInstance(context)
             ids.forEach { manager.partiallyUpdateAppWidget(it, header(context)) }
+            refreshArt(context, manager, ids)
+            // The list keeps its scroll position. It used to jump to the playing row, but
+            // that row's position was read before the list had redrawn, so it landed
+            // somewhere unrelated, and a tap is made on a row already on screen anyway.
             if (listChanged) {
                 @Suppress("DEPRECATION")
                 manager.notifyAppWidgetViewDataChanged(ids, R.id.widget_list)
             }
-            scrollToCurrent(context, manager, ids)
         }
 
-        /** Follows playback: when the track changes, brings its row into view once. */
-        private fun scrollToCurrent(context: Context, manager: AppWidgetManager, ids: IntArray) {
-            val current = NowPlaying.status.value.videoId ?: return
-            if (current == lastScrolledTo) return
-            val position = PlayerWidgetService.rowPositionOf(current)
-            if (position < 0) return
-            lastScrolledTo = current
-            val views = RemoteViews(context.packageName, R.layout.widget_player)
-            views.setScrollPosition(R.id.widget_list, position)
-            ids.forEach { manager.partiallyUpdateAppWidget(it, views) }
+        /** Loads the header's artwork off the main thread, then patches it in. */
+        private fun refreshArt(context: Context, manager: AppWidgetManager, ids: IntArray) {
+            val uri = PlayerLibrary.state.value.track(NowPlaying.status.value.videoId)?.uri
+            App.applicationScope.launch(Dispatchers.IO) {
+                val px = dp(context, 48)
+                val art = uri?.let { Artwork.load(context, it, px, dp(context, 10).toFloat()) }
+                val views = RemoteViews(context.packageName, R.layout.widget_player)
+                if (art == null) {
+                    views.setViewVisibility(R.id.widget_art, View.GONE)
+                } else {
+                    views.setImageViewBitmap(R.id.widget_art, art)
+                    views.setViewVisibility(R.id.widget_art, View.VISIBLE)
+                }
+                ids.forEach { manager.partiallyUpdateAppWidget(it, views) }
+            }
         }
+
+        private fun dp(context: Context, value: Int): Int = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), context.resources.displayMetrics
+        ).toInt()
 
         private fun build(context: Context, widgetId: Int): RemoteViews {
             val views = header(context)

@@ -10,18 +10,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -48,6 +45,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import android.net.Uri
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +66,7 @@ import com.junkfood.seal.player.PlayerLibrary
 import com.junkfood.seal.player.PlayerRow
 import com.junkfood.seal.player.buildRows
 import com.junkfood.seal.player.formatDuration
+import com.junkfood.seal.ui.common.AsyncImageImpl
 import com.junkfood.seal.ui.component.BackButton
 import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.util.ToastUtil
@@ -154,6 +154,7 @@ fun PlayerPage(onNavigateBack: () -> Unit) {
                             is PlayerRow.Part -> TrackRow(
                                 title = row.label,
                                 subtitle = null,
+                                artUri = null,
                                 durationMs = row.track.durationMs,
                                 indented = true,
                                 isCurrent = row.track.videoId == status.videoId,
@@ -164,7 +165,8 @@ fun PlayerPage(onNavigateBack: () -> Unit) {
 
                             is PlayerRow.Single -> TrackRow(
                                 title = row.track.title,
-                                subtitle = row.track.artist,
+                                subtitle = row.piece.performer,
+                                artUri = row.track.uri,
                                 durationMs = row.track.durationMs,
                                 indented = false,
                                 isCurrent = row.track.videoId == status.videoId,
@@ -221,13 +223,7 @@ private fun PieceRow(
     val containsCurrent = piece.tracks.any { it.videoId == currentId }
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
     RowSurface(highlighted = containsCurrent && !expanded, onClick = onClick, modifier = modifier) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-            contentDescription = null,
-            tint = if (containsCurrent) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(end = 12.dp).size(22.dp),
-        )
+        Artwork(uri = piece.tracks.first().uri, size = 48)
         Column(Modifier.weight(1f)) {
             Text(
                 text = piece.title,
@@ -236,24 +232,32 @@ private fun PieceRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = listOf(
-                    piece.performer,
-                    pluralStringResource(R.plurals.player_parts, piece.tracks.size, piece.tracks.size),
-                ).filter { it.isNotBlank() }.joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (piece.performer.isNotBlank()) {
+                Text(
+                    text = piece.performer,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         if (containsCurrent && isPlaying && !expanded) PlayingIndicator()
-        Text(
-            text = formatDuration(piece.durationMs),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Column(
+            horizontalAlignment = Alignment.End,
             modifier = Modifier.padding(horizontal = 8.dp),
-        )
+        ) {
+            Text(
+                text = formatDuration(piece.durationMs),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = pluralStringResource(R.plurals.player_parts, piece.tracks.size, piece.tracks.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Icon(
             imageVector = Icons.Rounded.ExpandMore,
             contentDescription = null,
@@ -267,6 +271,7 @@ private fun PieceRow(
 private fun TrackRow(
     title: String,
     subtitle: String?,
+    artUri: String?,
     durationMs: Long,
     indented: Boolean,
     isCurrent: Boolean,
@@ -277,9 +282,9 @@ private fun TrackRow(
     RowSurface(
         highlighted = isCurrent,
         onClick = onClick,
-        modifier = modifier.padding(start = if (indented) 28.dp else 0.dp),
+        modifier = modifier.padding(start = if (indented) 60.dp else 0.dp),
     ) {
-        if (!indented) Spacer(Modifier.width(34.dp))
+        if (artUri != null) Artwork(uri = artUri, size = 48)
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
@@ -363,6 +368,7 @@ private fun NowPlayingBar(status: NowPlaying.Status) {
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
+                track?.let { Artwork(uri = it.uri, size = 44) }
                 Column(Modifier.weight(1f)) {
                     val (title, subtitle) = when {
                         track == null -> stringResource(R.string.player_nothing_playing) to ""
@@ -401,5 +407,28 @@ private fun NowPlayingBar(status: NowPlaying.Status) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Embedded album art, read lazily through the app's audio-thumbnail fetcher and cached on
+ * disk. A file without artwork shows a plain tile, so rows stay aligned.
+ */
+@Composable
+private fun Artwork(uri: String, size: Int) {
+    val model = remember(uri) { Uri.parse(uri) }
+    Box(
+        modifier = Modifier
+            .padding(end = 12.dp)
+            .size(size.dp)
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+    ) {
+        AsyncImageImpl(
+            model = model,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }

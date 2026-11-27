@@ -28,6 +28,9 @@ const val YOUTUBE_CHANNEL_HANDLE = "youtube_channel_handle"
 /** Gemini API key, used to group tracks into pieces. Optional: without it nothing collapses. */
 const val GEMINI_API_KEY = "gemini_api_key"
 
+/** The [com.junkfood.seal.player.GeminiGrouper.PROMPT_VERSION] the stored grouping came from. */
+const val GROUPING_PROMPT_VERSION = "grouping_prompt_version"
+
 /** Pieces expanded in the player widget, as [com.junkfood.seal.player.Piece.id]s. */
 const val PLAYER_WIDGET_EXPANDED = "player_widget_expanded"
 

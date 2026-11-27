@@ -12,6 +12,9 @@ import com.junkfood.seal.util.AUDIO_EXTENSIONS
 import com.junkfood.seal.util.AudioFileData
 import com.junkfood.seal.util.DatabaseUtil
 import com.junkfood.seal.util.GEMINI_API_KEY
+import com.junkfood.seal.util.GROUPING_PROMPT_VERSION
+import com.junkfood.seal.util.PreferenceUtil.getInt
+import com.junkfood.seal.util.PreferenceUtil.updateInt
 import com.junkfood.seal.util.PLAYER_WIDGET_EXPANDED
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.PreferenceUtil.getStringSet
@@ -105,7 +108,8 @@ object PlayerLibrary {
                 return@withContext
             }
             publish(tracks)
-            if (tracks.any { it.pieceKey == null }) startGrouping()
+            val outdated = GROUPING_PROMPT_VERSION.getInt() < GeminiGrouper.PROMPT_VERSION
+            if (tracks.any { it.pieceKey == null } || outdated) startGrouping()
         }
     }
 
@@ -272,6 +276,7 @@ object PlayerLibrary {
             onChanged?.invoke()
             runCatching { group(tracks, apiKey) }.onSuccess { rows ->
                 DatabaseUtil.upsertTrackMetadata(rows)
+                GROUPING_PROMPT_VERSION.updateInt(GeminiGrouper.PROMPT_VERSION)
                 val byId = rows.associateBy { it.videoId }
                 val updated = mutableState.value.tracks.map { t ->
                     byId[t.videoId]?.let {

@@ -14,6 +14,16 @@
     android:paddingStart="8dp"
     android:paddingEnd="4dp">
 
+    <!-- Artwork for pieces and single tracks; hidden on the parts of an expanded piece. -->
+    <ImageView
+        android:id="@+id/widget_row_art"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="12dp"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
     <ImageView
         android:id="@+id/widget_row_playing"
         android:layout_width="18dp"
@@ -54,6 +64,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="8dp"
+        android:gravity="end"
         android:textColor="@color/widget_text_secondary"
         android:textSize="12sp" />
 
