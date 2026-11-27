@@ -57,50 +57,6 @@ class PlayerWidgetProvider : AppWidgetProvider() {
             refreshArt(context, manager, ids)
         }
 
-        /** The shortest a list row can be (its minHeight), which bounds how many fit. */
-        private const val MIN_ROW_HEIGHT_DP = 52
-
-        private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-
-        /**
-         * Scrolls every placed widget's list so row [position] is the top row.
-         *
-         * A widget can only ask its list to bring a row into view. A row coming from below
-         * lands at the bottom edge; only a row coming from above lands at the top. So the
-         * list first scrolls a full screen past [position], which takes that row off the
-         * top whatever the rows' heights, then scrolls back to it.
-         *
-         * This replaces estimating how many rows fit and scrolling to the row that many
-         * below. That estimate ran high (the widget's header grew, and two-line titles make
-         * rows taller than the minimum), which pushed the piece above the top edge. Here the
-         * last scroll aims at the row itself, so it always ends up on screen.
-         */
-        fun scrollTo(context: Context, position: Int, rowCount: Int) {
-            val ids = ids(context)
-            if (ids.isEmpty()) return
-            val manager = AppWidgetManager.getInstance(context)
-            ids.forEach { id ->
-                // The whole widget's height overstates the list's. That only costs a little
-                // extra scrolling, where understating it would leave the row on screen.
-                val heightDp = manager.getAppWidgetOptions(id)
-                    .getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT)
-                    .takeIf { it > 0 } ?: 400
-                val past = (position + heightDp / MIN_ROW_HEIGHT_DP + 1).coerceAtMost(rowCount - 1)
-                // Delayed so the launcher has the new rows before the first scroll, and the
-                // first scroll has settled before the second.
-                if (past > position) {
-                    mainHandler.postDelayed({ scroll(context, manager, id, past) }, 300)
-                }
-                mainHandler.postDelayed({ scroll(context, manager, id, position) }, 900)
-            }
-        }
-
-        private fun scroll(context: Context, manager: AppWidgetManager, id: Int, position: Int) {
-            val views = RemoteViews(context.packageName, R.layout.widget_player)
-            views.setScrollPosition(R.id.widget_list, position)
-            manager.partiallyUpdateAppWidget(id, views)
-        }
-
         fun ids(context: Context): IntArray =
             AppWidgetManager.getInstance(context)
                 .getAppWidgetIds(ComponentName(context, PlayerWidgetProvider::class.java))

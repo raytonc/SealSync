@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     One row: a piece (with a count and a chevron), a single track, or a part of an
-    expanded piece, which is indented. The fill-in intent on the root decides which.
+    expanded piece. A part is indented, and its indent holds a thread line that collapses
+    the piece when tapped. The fill-in intents on the row and the line decide what a tap
+    does.
 -->
 <!-- android:tint, not app:tint: widgets are inflated by the launcher without AppCompat. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -13,9 +15,30 @@
     android:gravity="center_vertical"
     android:minHeight="52dp"
     android:orientation="horizontal"
-    android:paddingVertical="6dp"
     android:paddingStart="8dp"
     android:paddingEnd="4dp">
+
+    <!--
+        The thread line, shown only on a piece's parts. The touch target is the whole
+        indent (52dp) and the full row height; the line itself is a 2dp bar down its
+        middle. Rows have no vertical padding and no dividers, so the bars join into one
+        line from the first part to the last.
+    -->
+    <FrameLayout
+        android:id="@+id/widget_row_thread"
+        android:layout_width="52dp"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/player_collapse"
+        android:visibility="gone">
+
+        <!-- An ImageView, not a View: widgets may only use the views RemoteViews allows. -->
+        <ImageView
+            android:layout_width="2dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="center_horizontal"
+            android:background="@color/widget_thread"
+            android:importantForAccessibility="no" />
+    </FrameLayout>
 
     <!-- Artwork for pieces and single tracks; hidden on the parts of an expanded piece. -->
     <ImageView

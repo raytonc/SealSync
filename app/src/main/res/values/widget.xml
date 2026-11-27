@@ -9,4 +9,5 @@
     <color name="widget_row_current">#2ED0BCFF</color>
     <dimen name="widget_corner_radius">24dp</dimen>
     <color name="widget_progress_track">#33E6E1E5</color>
+    <color name="widget_thread">#66CAC4D0</color>
 </resources>

@@ -70,6 +70,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import android.net.Uri
@@ -288,17 +293,24 @@ fun PlayerPage(
                                 modifier = Modifier.animateItem(),
                             )
 
-                            is PlayerRow.Part -> TrackRow(
-                                title = row.label,
-                                subtitle = null,
-                                artUri = null,
-                                durationMs = row.track.durationMs,
-                                indented = true,
-                                isCurrent = row.track.videoId == status.videoId,
-                                isPlaying = status.isPlaying,
-                                onClick = { PlayerActions.onTrackClicked(context, row.track.videoId) },
-                                modifier = Modifier.animateItem(),
-                            )
+                            is PlayerRow.Part -> Row(
+                                modifier = Modifier
+                                    .animateItem()
+                                    .height(IntrinsicSize.Min),
+                            ) {
+                                ThreadLine(onClick = { PlayerLibrary.setExpanded(row.piece.id, false) })
+                                TrackRow(
+                                    title = row.label,
+                                    subtitle = null,
+                                    artUri = null,
+                                    durationMs = row.track.durationMs,
+                                    indented = true,
+                                    isCurrent = row.track.videoId == status.videoId,
+                                    isPlaying = status.isPlaying,
+                                    onClick = { PlayerActions.onTrackClicked(context, row.track.videoId) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
 
                             is PlayerRow.Single -> TrackRow(
                                 title = row.track.title,
@@ -419,7 +431,7 @@ private fun TrackRow(
     RowSurface(
         highlighted = isCurrent,
         onClick = onClick,
-        modifier = modifier.padding(start = if (indented) 60.dp else 0.dp),
+        modifier = modifier,
     ) {
         if (artUri != null) Artwork(uri = artUri, size = 48)
         Column(Modifier.weight(1f)) {
@@ -541,6 +553,31 @@ private fun NowPlayingBar(status: NowPlaying.Status) {
                 }
             }
         }
+    }
+}
+
+/**
+ * The indent beside an expanded piece's parts, Reddit-thread style: a thin vertical line
+ * down the middle of a tap target as wide as the indent. Tapping it collapses the piece.
+ * Part rows sit edge to edge, so the line runs unbroken from the first part to the last.
+ */
+@Composable
+private fun ThreadLine(onClick: () -> Unit) {
+    val description = stringResource(R.string.player_collapse)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .width(60.dp)
+            .fillMaxHeight()
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = description },
+    ) {
+        Box(
+            Modifier
+                .width(2.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outlineVariant)
+        )
     }
 }
 

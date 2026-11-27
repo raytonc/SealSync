@@ -168,6 +168,7 @@
     <string name="gemini_api_key_dialog_text">Paste a Gemini API key from Google AI Studio. Track titles and artists are sent to Gemini to work out which tracks belong to the same piece.</string>
     <string name="player_widget_name">SealSync player</string>
     <string name="playlists">Playlists</string>
+    <string name="player_collapse">Collapse piece</string>
     <string name="player_sync">Sync playlists</string>
     <string name="player_more">More options</string>
     <string name="player_rescan">Rescan folder</string>

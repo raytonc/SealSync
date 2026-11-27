@@ -7,4 +7,5 @@
     <color name="widget_on_accent">@android:color/system_accent1_800</color>
     <dimen name="widget_corner_radius">@android:dimen/system_app_widget_background_radius</dimen>
     <color name="widget_progress_track">@android:color/system_neutral2_700</color>
+    <color name="widget_thread">@android:color/system_neutral2_500</color>
 </resources>

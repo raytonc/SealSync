@@ -24,8 +24,6 @@ class PlayerWidgetService : RemoteViewsService() {
 
         private var snapshot: List<PlayerRow> = emptyList()
 
-        /** The piece that was open after the last redraw, to notice a new one opening. */
-        private var lastOpen: String? = PlayerLibrary.expanded.value.firstOrNull()
         private var currentId: String? = null
 
         override fun onCreate() = Unit
@@ -36,19 +34,6 @@ class PlayerWidgetService : RemoteViewsService() {
             snapshot = buildRows(PlayerLibrary.state.value.pieces, PlayerLibrary.expanded.value)
             currentId = NowPlaying.status.value.videoId
 
-            // A piece that has just been opened scrolls to the top of the list. This is
-            // the only point where the new rows are known to be in place, so the scroll is
-            // issued from here rather than from the tap, which would aim at the old list.
-            val open = PlayerLibrary.expanded.value.firstOrNull()
-            if (open != null && open != lastOpen) {
-                val position = snapshot.indexOfFirst {
-                    it is PlayerRow.Header && it.piece.id == open
-                }
-                if (position >= 0) {
-                    PlayerWidgetProvider.scrollTo(context, position, snapshot.size)
-                }
-            }
-            lastOpen = open
         }
 
         override fun onDestroy() {
@@ -62,7 +47,6 @@ class PlayerWidgetService : RemoteViewsService() {
             val row = snapshot.getOrNull(position) ?: return views
             val fillIn = Intent()
 
-            var indent = 0
             var isCurrent = false
             when (row) {
                 is PlayerRow.Single -> {
@@ -108,15 +92,24 @@ class PlayerWidgetService : RemoteViewsService() {
                     views.setViewVisibility(R.id.widget_row_subtitle, View.GONE)
                     views.setTextViewText(R.id.widget_row_meta, formatDuration(row.track.durationMs))
                     views.setViewVisibility(R.id.widget_row_chevron, View.GONE)
-                    // Lines up with the piece's title, past where its artwork sits.
-                    indent = 52
                     views.setViewVisibility(R.id.widget_row_art, View.GONE)
+                    // The thread fills the indent, lining the title up with the piece's.
+                    views.setViewVisibility(R.id.widget_row_thread, View.VISIBLE)
+                    views.setOnClickFillInIntent(
+                        R.id.widget_row_thread,
+                        Intent().putExtra(PlayerWidgetReceiver.EXTRA_COLLAPSE_PIECE_ID, row.piece.id),
+                    )
                     isCurrent = row.track.videoId == currentId
                     fillIn.putExtra(PlayerWidgetReceiver.EXTRA_VIDEO_ID, row.track.videoId)
                 }
             }
 
-            views.setViewPadding(R.id.widget_row, dp(8 + indent), dp(6), dp(4), dp(6))
+            if (row !is PlayerRow.Part) views.setViewVisibility(R.id.widget_row_thread, View.GONE)
+            // A part's thread starts at the row's edge, so the line sits under the art
+            // column of the piece above it.
+            views.setViewPadding(
+                R.id.widget_row, dp(if (row is PlayerRow.Part) 0 else 8), 0, dp(4), 0
+            )
             views.setViewVisibility(R.id.widget_row_playing, visibleIf(isCurrent))
             views.setInt(
                 R.id.widget_row, "setBackgroundResource",

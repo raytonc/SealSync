@@ -29,6 +29,8 @@ class PlayerWidgetReceiver : BroadcastReceiver() {
 
         const val EXTRA_PIECE_ID = "piece_id"
         const val EXTRA_VIDEO_ID = "video_id"
+        /** Set by a part's thread line: collapse this piece and leave playback alone. */
+        const val EXTRA_COLLAPSE_PIECE_ID = "collapse_piece_id"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -39,6 +41,10 @@ class PlayerWidgetReceiver : BroadcastReceiver() {
             ACTION_PREVIOUS -> PlayerClient.previous(app)
             ACTION_SEEK -> PlayerClient.seek(app, intent.getFloatExtra(EXTRA_FRACTION, 0f))
             ACTION_ROW -> {
+                intent.getStringExtra(EXTRA_COLLAPSE_PIECE_ID)?.let {
+                    PlayerLibrary.setExpanded(it, false)
+                    return
+                }
                 intent.getStringExtra(EXTRA_VIDEO_ID)?.let {
                     PlayerActions.onTrackClicked(app, it)
                     return
