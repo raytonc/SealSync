@@ -60,7 +60,12 @@ object PlayerLibrary {
     private val mutableState = MutableStateFlow(LibraryState())
     val state: StateFlow<LibraryState> = mutableState.asStateFlow()
 
-    private val mutableExpanded = MutableStateFlow(PLAYER_WIDGET_EXPANDED.getStringSet())
+    /**
+     * At most one piece is open at a time. Held as a set because the list builders take
+     * one; trimmed on load because earlier builds allowed several.
+     */
+    private val mutableExpanded =
+        MutableStateFlow(PLAYER_WIDGET_EXPANDED.getStringSet().take(1).toSet())
     val expanded: StateFlow<Set<String>> = mutableExpanded.asStateFlow()
 
     private val loadMutex = Mutex()
@@ -74,7 +79,8 @@ object PlayerLibrary {
     fun isExpanded(pieceId: String) = pieceId in mutableExpanded.value
 
     fun setExpanded(pieceId: String, expanded: Boolean) {
-        mutableExpanded.update { if (expanded) it + pieceId else it - pieceId }
+        // Opening a piece closes whichever one was open before.
+        mutableExpanded.update { if (expanded) setOf(pieceId) else it - pieceId }
         PLAYER_WIDGET_EXPANDED.updateStringSet(mutableExpanded.value)
         onChanged?.invoke()
     }
