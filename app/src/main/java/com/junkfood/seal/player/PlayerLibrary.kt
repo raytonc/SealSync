@@ -40,15 +40,17 @@ import java.io.File
 import java.util.UUID
 
 /**
- * The downloaded library in play order, grouped into pieces.
+ * The downloaded library, grouped into pieces and listed A to Z.
  *
  * One instance per process, shared by the player screen, [PlaybackService] and the
  * widget, so all three show the same list and the same expanded pieces.
  *
- * Play order is the sync's order: playlists in the order they were added, each in its own
- * order, read from the [TrackTag] rows a sync writes. Files with no row yet (a fresh
+ * Tracks are first read in the sync's order: playlists in the order they were added, each
+ * in its own order, from the [TrackTag] rows a sync writes. Files with no row yet (a fresh
  * install, or tracks a sync has not retagged) are ordered by their album and track-number
- * tags, which earlier syncs wrote into the files themselves, and then by title.
+ * tags, which earlier syncs wrote into the files themselves, and then by title. Grouping
+ * works on that order, because it keeps a piece's parts together. The list and the play
+ * queue then put whole pieces A to Z; see [arrangeAlphabetically].
  */
 object PlayerLibrary {
 
@@ -130,13 +132,16 @@ object PlayerLibrary {
         }
     }
 
+    /** [tracks] is in playlist order; the published queue and pieces are A to Z. */
     private fun publish(tracks: List<Track>) {
+        val (queue, pieces) = arrangeAlphabetically(tracks)
         mutableState.update {
             it.copy(
                 loaded = true,
                 loading = false,
-                tracks = tracks,
-                pieces = buildPieces(tracks),
+                tracks = queue,
+                playlistOrder = tracks,
+                pieces = pieces,
                 error = null,
             )
         }
@@ -276,7 +281,7 @@ object PlayerLibrary {
             return
         }
         groupingJob = App.applicationScope.launch(Dispatchers.IO) {
-            val tracks = mutableState.value.tracks
+            val tracks = mutableState.value.playlistOrder
             if (tracks.isEmpty()) return@launch
             mutableState.update { it.copy(grouping = GroupingStatus.Running(tracks.size)) }
             onChanged?.invoke()
@@ -284,7 +289,7 @@ object PlayerLibrary {
                 DatabaseUtil.upsertTrackMetadata(rows)
                 GROUPING_PROMPT_VERSION.updateInt(GeminiGrouper.PROMPT_VERSION)
                 val byId = rows.associateBy { it.videoId }
-                val updated = mutableState.value.tracks.map { t ->
+                val updated = mutableState.value.playlistOrder.map { t ->
                     byId[t.videoId]?.let {
                         t.copy(
                             pieceKey = it.pieceKey,
