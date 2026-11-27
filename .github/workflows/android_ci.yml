@@ -21,6 +21,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        # The action's default list includes "tools", which current cmdline-tools no
+        # longer ship, so sdkmanager fails before the build starts. AGP fetches the
+        # platform and build tools it needs on its own.
+        with:
+          packages: platform-tools
 
       - uses: gradle/actions/setup-gradle@v3
       - name: Grant execute permission for gradlew
