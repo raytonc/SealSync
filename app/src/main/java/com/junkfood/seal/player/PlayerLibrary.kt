@@ -116,19 +116,27 @@ object PlayerLibrary {
                 return@withContext
             }
             publish(tracks)
+            // A grouping made under an older prompt is redone in full, once. Otherwise
+            // only tracks that have never been grouped go to Gemini.
             val outdated = GROUPING_PROMPT_VERSION.getInt() < GeminiGrouper.PROMPT_VERSION
-            if (tracks.any { it.pieceKey == null } || outdated) startGrouping()
+            when {
+                outdated -> startGrouping(onlyNew = false)
+                tracks.any { it.pieceKey == null } -> startGrouping(onlyNew = true)
+            }
         }
     }
 
     /**
      * Asks Gemini again for the whole library. The old grouping stays in place until the
      * new one arrives, so a failed request leaves the list as it was.
+     *
+     * This is also how a new movement joins a piece already in the library: grouping
+     * after a sync only looks at the new tracks, so it cannot know that.
      */
     fun regroup() {
         App.applicationScope.launch(Dispatchers.IO) {
             ensureLoaded()
-            startGrouping()
+            startGrouping(onlyNew = false)
         }
     }
 
@@ -272,7 +280,16 @@ object PlayerLibrary {
 
     // --- Grouping ---
 
-    private fun startGrouping() {
+    /**
+     * Groups tracks with Gemini in the background.
+     *
+     * With [onlyNew], only tracks with no piece yet are sent, on the assumption that new
+     * tracks form pieces among themselves and never extend one already in the library. That
+     * keeps the cost proportional to what a sync added rather than to the library's size:
+     * adding a four-movement symphony is one small request whatever else is there. Without
+     * it, the whole library is sent, which is what "Regroup with Gemini" does.
+     */
+    private fun startGrouping(onlyNew: Boolean) {
         if (groupingJob?.isActive == true) return
         val apiKey = GEMINI_API_KEY.getString()
         if (apiKey.isBlank()) {
@@ -281,13 +298,17 @@ object PlayerLibrary {
             return
         }
         groupingJob = App.applicationScope.launch(Dispatchers.IO) {
+            // Playlist order, so a piece's new parts reach Gemini next to each other.
             val tracks = mutableState.value.playlistOrder
+                .let { all -> if (onlyNew) all.filter { it.pieceKey == null } else all }
             if (tracks.isEmpty()) return@launch
+            Log.d(TAG, "grouping ${tracks.size} tracks (onlyNew=$onlyNew)")
             mutableState.update { it.copy(grouping = GroupingStatus.Running(tracks.size)) }
             onChanged?.invoke()
             runCatching { group(tracks, apiKey) }.onSuccess { rows ->
                 DatabaseUtil.upsertTrackMetadata(rows)
-                GROUPING_PROMPT_VERSION.updateInt(GeminiGrouper.PROMPT_VERSION)
+                // Only a full pass brings the whole library up to the current prompt.
+                if (!onlyNew) GROUPING_PROMPT_VERSION.updateInt(GeminiGrouper.PROMPT_VERSION)
                 val byId = rows.associateBy { it.videoId }
                 val updated = mutableState.value.playlistOrder.map { t ->
                     byId[t.videoId]?.let {
@@ -312,9 +333,10 @@ object PlayerLibrary {
     }
 
     /**
-     * Groups the whole library, not only the new tracks: a new movement only joins its
-     * piece if the model sees the neighbours it belongs with. A library of a few hundred
-     * tracks is one request, and this only runs when something is ungrouped.
+     * Groups [tracks], which are in playlist order, and returns a row for each.
+     *
+     * Every piece gets a fresh key, so new tracks never merge into a piece that was
+     * grouped earlier, even when they happen to sit next to it.
      */
     private suspend fun group(tracks: List<Track>, apiKey: String): List<TrackMetadata> {
         val result = mutableListOf<TrackMetadata>()
