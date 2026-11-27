@@ -2,6 +2,7 @@ package com.junkfood.seal.player
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -50,10 +51,10 @@ object GeminiGrouper {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        // Not streamed, so nothing arrives until the whole answer is generated, which for
-        // a full chunk can take a couple of minutes.
-        .readTimeout(300, TimeUnit.SECONDS)
-        .callTimeout(360, TimeUnit.SECONDS)
+        // Not streamed, so nothing arrives until the whole answer is generated. Grouping a
+        // 464-track library took 255 seconds, so the limits leave room for a slower day.
+        .readTimeout(600, TimeUnit.SECONDS)
+        .callTimeout(660, TimeUnit.SECONDS)
         .build()
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -71,8 +72,15 @@ object GeminiGrouper {
         val part: String,
     )
 
-    class GroupingException(message: String, cause: Throwable? = null) :
-        Exception(message, cause)
+    /** [retryable] is true for failures worth trying again: overload, rate limit, network. */
+    class GroupingException(
+        message: String,
+        cause: Throwable? = null,
+        val retryable: Boolean = false,
+    ) : Exception(message, cause)
+
+    /** Waits before each retry. Gemini answers 503 when overloaded, which usually passes. */
+    private val RETRY_DELAYS_MS = listOf(15_000L, 60_000L)
 
     private val INSTRUCTIONS = """
         You organise a music library. The user gives you tracks in play order, one per
@@ -136,7 +144,19 @@ object GeminiGrouper {
     suspend fun group(tracks: List<Input>, apiKey: String): List<Assignment> =
         withContext(Dispatchers.IO) {
             if (tracks.isEmpty()) return@withContext emptyList()
-            parse(tracks, request(tracks, apiKey))
+            var attempt = 0
+            var result: List<Assignment>? = null
+            while (result == null) {
+                try {
+                    result = parse(tracks, request(tracks, apiKey))
+                } catch (e: GroupingException) {
+                    val wait = RETRY_DELAYS_MS.getOrNull(attempt++)
+                    if (!e.retryable || wait == null) throw e
+                    Log.w(TAG, "group: ${e.message}, retrying in ${wait / 1000}s")
+                    delay(wait)
+                }
+            }
+            result
         }
 
     /** Reads the model's JSON answer into one assignment per track. */
@@ -179,14 +199,17 @@ object GeminiGrouper {
                 val payload = response.body.string()
                 if (!response.isSuccessful) {
                     Log.e(TAG, "request: HTTP ${response.code}: ${payload.take(500)}")
-                    throw GroupingException(errorMessage(response.code, payload))
+                    throw GroupingException(
+                        errorMessage(response.code, payload),
+                        retryable = response.code == 429 || response.code >= 500,
+                    )
                 }
                 payload
             }
         } catch (e: GroupingException) {
             throw e
         } catch (e: Exception) {
-            throw GroupingException("Could not reach Gemini: ${e.message}", e)
+            throw GroupingException("Could not reach Gemini: ${e.message}", e, retryable = true)
         }
 
         val parsed = runCatching { json.decodeFromString<Response>(raw) }
