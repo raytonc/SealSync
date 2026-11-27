@@ -33,6 +33,13 @@ object PlayerClient {
 
     fun next(context: Context) = send(context, PlaybackService.COMMAND_NEXT)
 
+    /** Seeks the current track to [fraction] of its length, from 0 to 1. */
+    fun seek(context: Context, fraction: Float) = send(
+        context,
+        PlaybackService.COMMAND_SEEK,
+        Bundle().apply { putFloat(PlaybackService.EXTRA_FRACTION, fraction) },
+    )
+
     fun previous(context: Context) = send(context, PlaybackService.COMMAND_PREVIOUS)
 
     /** Must be called on the main thread; MediaController is bound to the calling looper. */

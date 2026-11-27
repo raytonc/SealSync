@@ -8,4 +8,5 @@
     <color name="widget_on_accent">#FF381E72</color>
     <color name="widget_row_current">#2ED0BCFF</color>
     <dimen name="widget_corner_radius">24dp</dimen>
+    <color name="widget_progress_track">#33E6E1E5</color>
 </resources>

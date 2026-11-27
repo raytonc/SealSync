@@ -59,6 +59,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -493,14 +496,11 @@ private fun NowPlayingBar(status: NowPlaying.Status) {
 
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.navigationBarsPadding()) {
-            val progress = if (status.durationMs > 0) {
-                (status.positionMs.toFloat() / status.durationMs).coerceIn(0f, 1f)
-            } else 0f
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            SeekBar(status = status, fallbackDurationMs = track?.durationMs ?: 0L)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 10.dp),
             ) {
                 track?.let { Artwork(uri = it.uri, size = 44) }
                 Column(Modifier.weight(1f)) {
@@ -540,6 +540,50 @@ private fun NowPlayingBar(status: NowPlaying.Status) {
                     Icon(Icons.Rounded.SkipNext, stringResource(R.string.player_next))
                 }
             }
+        }
+    }
+}
+
+/**
+ * A draggable progress bar with elapsed and total time.
+ *
+ * While dragging, the thumb and the elapsed time follow the finger and the player is left
+ * alone; the seek is sent once, on release. The service reports the position about once a
+ * second, so the thumb is not otherwise animated between updates.
+ */
+@Composable
+private fun SeekBar(status: NowPlaying.Status, fallbackDurationMs: Long) {
+    val context = LocalContext.current
+    val duration = status.durationMs.takeIf { it > 0 } ?: fallbackDurationMs
+    val played = if (duration > 0) (status.positionMs.toFloat() / duration).coerceIn(0f, 1f) else 0f
+
+    // Non-null only while a drag is in progress.
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    val shown = dragging ?: played
+
+    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp)) {
+        Slider(
+            value = shown,
+            onValueChange = { dragging = it },
+            onValueChangeFinished = {
+                dragging?.let { PlayerClient.seek(context, it) }
+                dragging = null
+            },
+            enabled = duration > 0,
+            modifier = Modifier.fillMaxWidth().height(28.dp),
+        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(
+                text = formatDuration((shown * duration).toLong()),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = formatDuration(duration),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

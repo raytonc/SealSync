@@ -16,6 +16,7 @@ import com.junkfood.seal.R
 import com.junkfood.seal.player.Artwork
 import com.junkfood.seal.player.NowPlaying
 import com.junkfood.seal.player.PlayerLibrary
+import com.junkfood.seal.player.formatDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -162,6 +163,21 @@ class PlayerWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_previous, action(context, PlayerWidgetReceiver.ACTION_PREVIOUS))
             views.setOnClickPendingIntent(R.id.widget_play_pause, action(context, PlayerWidgetReceiver.ACTION_TOGGLE))
             views.setOnClickPendingIntent(R.id.widget_next, action(context, PlayerWidgetReceiver.ACTION_NEXT))
+            SEEK_ZONES.forEachIndexed { i, zone ->
+                // Each zone seeks to its own centre, so the last one is just short of the end
+                // rather than at it, which would skip straight to the next track.
+                val fraction = (i + 0.5f) / SEEK_ZONES.size
+                views.setOnClickPendingIntent(
+                    zone,
+                    PendingIntent.getBroadcast(
+                        context, SEEK_REQUEST_BASE + i,
+                        Intent(context, PlayerWidgetReceiver::class.java)
+                            .setAction(PlayerWidgetReceiver.ACTION_SEEK)
+                            .putExtra(PlayerWidgetReceiver.EXTRA_FRACTION, fraction),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                )
+            }
             views.setOnClickPendingIntent(
                 R.id.widget_now_playing,
                 PendingIntent.getActivity(
@@ -173,6 +189,45 @@ class PlayerWidgetProvider : AppWidgetProvider() {
                 )
             )
             return views
+        }
+
+        private val SEEK_ZONES = intArrayOf(
+            R.id.widget_seek_0, R.id.widget_seek_1, R.id.widget_seek_2, R.id.widget_seek_3,
+            R.id.widget_seek_4, R.id.widget_seek_5, R.id.widget_seek_6, R.id.widget_seek_7,
+            R.id.widget_seek_8, R.id.widget_seek_9, R.id.widget_seek_10, R.id.widget_seek_11,
+            R.id.widget_seek_12, R.id.widget_seek_13, R.id.widget_seek_14, R.id.widget_seek_15,
+            R.id.widget_seek_16, R.id.widget_seek_17, R.id.widget_seek_18, R.id.widget_seek_19,
+        )
+
+        /** Request codes for the seek zones, clear of the transport buttons' hash codes. */
+        private const val SEEK_REQUEST_BASE = 1_000
+
+        /** Redraws only the progress bar and times, which change every few seconds. */
+        fun refreshProgress(context: Context) {
+            val ids = ids(context)
+            if (ids.isEmpty()) return
+            val status = NowPlaying.status.value
+            val track = PlayerLibrary.state.value.track(status.videoId)
+            val views = RemoteViews(context.packageName, R.layout.widget_player)
+            setProgress(views, status, track?.durationMs ?: 0L)
+            val manager = AppWidgetManager.getInstance(context)
+            ids.forEach { manager.partiallyUpdateAppWidget(it, views) }
+        }
+
+        /**
+         * The service reports a duration once the file is open; before that, and while the
+         * service is not running, the duration read from the file's tags stands in.
+         */
+        private fun setProgress(views: RemoteViews, status: NowPlaying.Status, tagged: Long) {
+            val duration = status.durationMs.takeIf { it > 0 } ?: tagged
+            val position = status.positionMs.coerceIn(0L, duration.coerceAtLeast(0L))
+            views.setTextViewText(R.id.widget_elapsed, formatDuration(position))
+            views.setTextViewText(R.id.widget_duration, formatDuration(duration))
+            views.setProgressBar(
+                R.id.widget_progress, 1000,
+                if (duration > 0) (position * 1000 / duration).toInt() else 0,
+                false,
+            )
         }
 
         /** The now-playing text and the play/pause icon. */
@@ -198,6 +253,7 @@ class PlayerWidgetProvider : AppWidgetProvider() {
                 )
             }
 
+            setProgress(views, status, track?.durationMs ?: 0L)
             views.setImageViewResource(
                 R.id.widget_play_pause,
                 if (status.isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play

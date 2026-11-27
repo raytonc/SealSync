@@ -42,11 +42,32 @@ object NowPlaying {
     @Volatile
     var onChanged: ((trackChanged: Boolean) -> Unit)? = null
 
+    /**
+     * Called as the position moves, so the widget's progress bar and times can follow.
+     * Throttled: each call redraws the widget header across a process boundary.
+     */
+    @Volatile
+    var onProgress: (() -> Unit)? = null
+
+    /** How often the widget's progress redraws while playing. */
+    private const val PROGRESS_INTERVAL_MS = 5_000L
+    private var lastProgressAt = 0L
+
     internal fun publish(status: Status) {
         val previous = mutableStatus.value
         mutableStatus.value = status
         val trackChanged = previous.videoId != status.videoId
-        if (trackChanged || previous.isPlaying != status.isPlaying) onChanged?.invoke(trackChanged)
+        val stateChanged = previous.isPlaying != status.isPlaying
+        val now = android.os.SystemClock.elapsedRealtime()
+        // A jump of more than a couple of seconds is a seek, which should show at once.
+        val jumped = kotlin.math.abs(status.positionMs - previous.positionMs) > 2_500
+        if (trackChanged || stateChanged) {
+            lastProgressAt = now
+            onChanged?.invoke(trackChanged)
+        } else if (jumped || now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+            lastProgressAt = now
+            onProgress?.invoke()
+        }
     }
 
     internal fun persist(videoId: String?, positionMs: Long) {

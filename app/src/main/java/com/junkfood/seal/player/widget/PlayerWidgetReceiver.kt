@@ -24,6 +24,8 @@ class PlayerWidgetReceiver : BroadcastReceiver() {
         const val ACTION_TOGGLE = "com.junkfood.seal.player.widget.TOGGLE"
         const val ACTION_NEXT = "com.junkfood.seal.player.widget.NEXT"
         const val ACTION_PREVIOUS = "com.junkfood.seal.player.widget.PREVIOUS"
+        const val ACTION_SEEK = "com.junkfood.seal.player.widget.SEEK"
+        const val EXTRA_FRACTION = "fraction"
 
         const val EXTRA_PIECE_ID = "piece_id"
         const val EXTRA_VIDEO_ID = "video_id"
@@ -35,6 +37,7 @@ class PlayerWidgetReceiver : BroadcastReceiver() {
             ACTION_TOGGLE -> PlayerClient.toggle(app)
             ACTION_NEXT -> PlayerClient.next(app)
             ACTION_PREVIOUS -> PlayerClient.previous(app)
+            ACTION_SEEK -> PlayerClient.seek(app, intent.getFloatExtra(EXTRA_FRACTION, 0f))
             ACTION_ROW -> {
                 intent.getStringExtra(EXTRA_VIDEO_ID)?.let {
                     PlayerActions.onTrackClicked(app, it)

@@ -57,10 +57,14 @@ class PlaybackService : MediaLibraryService() {
         const val COMMAND_TOGGLE = "sealsync.TOGGLE"
         const val COMMAND_NEXT = "sealsync.NEXT"
         const val COMMAND_PREVIOUS = "sealsync.PREVIOUS"
+        const val COMMAND_SEEK = "sealsync.SEEK"
         const val EXTRA_VIDEO_ID = "video_id"
+        /** Where to seek, as a fraction of the current track from 0 to 1. */
+        const val EXTRA_FRACTION = "fraction"
 
         val CUSTOM_COMMANDS = listOf(
-            COMMAND_PLAY_TRACK, COMMAND_PLAY, COMMAND_TOGGLE, COMMAND_NEXT, COMMAND_PREVIOUS
+            COMMAND_PLAY_TRACK, COMMAND_PLAY, COMMAND_TOGGLE, COMMAND_NEXT, COMMAND_PREVIOUS,
+            COMMAND_SEEK,
         )
 
         /** Restarting the track is more useful than going back once this much has played. */
@@ -277,6 +281,25 @@ class PlaybackService : MediaLibraryService() {
      * offer to resume playback: its media-resume check connects as a browser and requires
      * a root. The root is empty; nothing browses this library.
      */
+    /**
+     * Seeks within the current track. Leaves the play state as it was.
+     *
+     * On a cold start the file is not open yet and the player has no duration, so the one
+     * read from the file's tags stands in. Seeking before the player is ready is fine; it
+     * starts from there once it is. The position is saved at once, because a paused
+     * service stops as soon as the controller lets go.
+     */
+    private suspend fun seek(fraction: Float) {
+        ensureQueue()
+        val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
+            ?: PlayerLibrary.state.value.track(player.currentMediaItem?.mediaId)?.durationMs
+            ?: return
+        if (duration <= 0) return
+        player.seekTo((duration * fraction.coerceIn(0f, 1f)).toLong())
+        saveProgress()
+        publishStatus()
+    }
+
     private val sessionCallback = object : MediaLibrarySession.Callback {
         override fun onGetLibraryRoot(
             session: MediaLibrarySession,
@@ -335,6 +358,7 @@ class PlaybackService : MediaLibraryService() {
                         COMMAND_TOGGLE -> toggle()
                         COMMAND_NEXT -> next()
                         COMMAND_PREVIOUS -> previous()
+                        COMMAND_SEEK -> seek(args.getFloat(EXTRA_FRACTION, 0f))
                         else -> Unit
                     }
                 }.onFailure { Log.e(TAG, "command ${customCommand.customAction} failed", it) }
