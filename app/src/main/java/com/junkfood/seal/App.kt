@@ -131,6 +131,7 @@ class App : Application(), ImageLoaderFactory {
         NowPlaying.onChanged = { trackChanged ->
             PlayerWidgetProvider.refresh(this, listChanged = trackChanged)
         }
+        PlayerWidgetProvider.rebind(this)
 
         // Reapply the scheduled sync on every start. WorkManager persists its own schedule
         // across reboots (given RECEIVE_BOOT_COMPLETED) and updates, so this is not what

@@ -38,6 +38,24 @@ class PlayerWidgetProvider : AppWidgetProvider() {
 
     companion object {
 
+        /**
+         * Rebuilds every placed widget from scratch, click handlers included.
+         *
+         * [refresh] only patches text and icons. Force-stopping the app cancels every
+         * PendingIntent it owns, which leaves the widget drawn but dead to taps until
+         * something sends a full update. Called on every process start, so opening the
+         * app is enough to bring it back.
+         */
+        fun rebind(context: Context) {
+            val ids = ids(context)
+            if (ids.isEmpty()) return
+            val manager = AppWidgetManager.getInstance(context)
+            ids.forEach { manager.updateAppWidget(it, build(context, it)) }
+            @Suppress("DEPRECATION")
+            manager.notifyAppWidgetViewDataChanged(ids, R.id.widget_list)
+            refreshArt(context, manager, ids)
+        }
+
         fun ids(context: Context): IntArray =
             AppWidgetManager.getInstance(context)
                 .getAppWidgetIds(ComponentName(context, PlayerWidgetProvider::class.java))
